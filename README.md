@@ -52,25 +52,25 @@ API RESTful sécurisée pour la gestion des utilisateurs, l'authentification, le
 *   **Production :** `npm run build` puis `npm start` (avec `NODE_ENV=production`).
 
 ## Structure des Dossiers Principaux
-
-### src/
-######├── config/ # Config Sequelize-CLI
-######├── controllers/ # Contrôleurs (Auth, User, Establishment, Service, Booking, etc.)
-######├── dtos/ # Zod Schemas & Mappers (Validation/Output DTOs)
-######├── errors/ # Classes d'erreurs personnalisées (AppError, specific errors)
-######├── middlewares/ # Middlewares Express (requireAuth, ensureSelf, verifyCsrf, error, etc.)
-######├── migrations/ # Migrations Sequelize
-######├── models/ # Modèles Sequelize (User, Establishment, Service, Booking, etc.)
-######├── routes/ # Routeurs Express (auth, users, establishments, services, etc.)
-######├── seeders/ # Seeders Sequelize
-######├── services/ # Logique métier (Auth, User, Establishment, Booking, File, Notification, etc.)
-######├── types/ # Définitions de types .d.ts globales
-######└── server.ts # Point d'entrée Express
-######.env # Variables d'environnement
-######.env.example
-######.sequelizerc
-######tsconfig.json
-
+```
+src/
+├── config/ # Config Sequelize-CLI
+├── controllers/ # Contrôleurs (Auth, User, Establishment, Service, Booking, etc.)
+├── dtos/ # Zod Schemas & Mappers (Validation/Output DTOs)
+├── errors/ # Classes d'erreurs personnalisées (AppError, specific errors)
+├── middlewares/ # Middlewares Express (requireAuth, ensureSelf, verifyCsrf, error, etc.)
+├── migrations/ # Migrations Sequelize
+├── models/ # Modèles Sequelize (User, Establishment, Service, Booking, etc.)
+├── routes/ # Routeurs Express (auth, users, establishments, services, etc.)
+├── seeders/ # Seeders Sequelize
+├── services/ # Logique métier (Auth, User, Establishment, Booking, File, Notification, etc.)
+├── types/ # Définitions de types .d.ts globales
+└── server.ts # Point d'entrée Express
+.env # Variables d'environnement
+.env.example
+.sequelizerc
+tsconfig.json
+```
 
 ## Endpoints API Détaillés
 
