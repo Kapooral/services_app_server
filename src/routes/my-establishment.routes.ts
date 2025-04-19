@@ -8,27 +8,26 @@ import { EstablishmentService } from '../services/establishment.service';
 import { ServiceService } from '../services/service.service';
 import { AvailabilityService } from '../services/availability.service';
 import { BookingService } from '../services/booking.service';
-import { ensureOwnsEstablishment, requireRole } from '../middlewares/auth.middleware'; // Utiliser ensureOwnsEstablishment
+import { ensureOwnsEstablishment, requireRole } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 import { fileService } from '../services/file.service';
 
 const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
 const establishmentPictureUpload = multer(fileService.multerOptions).single('profilePicture');
 
-// Ce routeur sera monté sous /api/users/me/establishments/:establishmentId
-// Il attend establishmentId dans req.params
 export const createMyEstablishmentRouter = (
     establishmentService: EstablishmentService,
     serviceService: ServiceService,
     availabilityService: AvailabilityService,
     bookingService: BookingService
 ): Router => {
-    const router = Router({ mergeParams: true });
+    const router = Router({ mergeParams: true }); // Important: mergeParams pour récupérer :establishmentId
 
     const establishmentController = new EstablishmentController(establishmentService);
     const serviceController = new ServiceController(serviceService, availabilityService);
     const bookingController = new BookingController(bookingService);
 
+    // Appliquer le middleware d'ownership à toutes les routes de ce routeur
     router.use(ensureOwnsEstablishment);
 
     // --- Routes pour l'établissement spécifique ---
@@ -42,6 +41,8 @@ export const createMyEstablishmentRouter = (
     // Services
     router.post('/services', verifyCsrfToken, serviceController.createForMyEstablishment);
     router.get('/services', serviceController.getOwnedForMyEstablishment);
+    // *** NOUVELLE ROUTE ***
+    router.get('/services/:serviceId', serviceController.getOwnedServiceById); // Pas besoin de middleware ici car hérités
 
     // Disponibilité - Règles
     router.post('/availability/rules', verifyCsrfToken, establishmentController.createMyRule);
@@ -56,7 +57,3 @@ export const createMyEstablishmentRouter = (
 
     return router;
 };
-
-// Note: Les routes DELETE/PUT pour rules/overrides/services par leur ID propre
-// restent dans leurs routeurs respectifs (availability.routes.ts, service.routes.ts)
-// car leur URL n'est pas naturellement imbriquée sous /me/establishments/:id

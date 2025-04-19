@@ -23,6 +23,7 @@ export class ServiceController {
         // Bind methods
         this.createForMyEstablishment = this.createForMyEstablishment.bind(this);
         this.getOwnedForMyEstablishment = this.getOwnedForMyEstablishment.bind(this);
+        this.getOwnedServiceById = this.getOwnedServiceById.bind(this);
         this.update = this.update.bind(this);
         this.delete = this.delete.bind(this);
         this.getPublicByEstablishment = this.getPublicByEstablishment.bind(this);
@@ -71,6 +72,25 @@ export class ServiceController {
                 data: outputDtos,
                 pagination: { totalItems: count, currentPage: page, itemsPerPage: limit, totalPages: Math.ceil(count / limit) }
             });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // GET /users/me/establishments/:establishmentId/services/:serviceId
+    async getOwnedServiceById(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            const serviceId = parseInt(req.params.serviceId, 10);
+
+            if (isNaN(establishmentId) || isNaN(serviceId)) {
+                throw new AppError('InvalidParameter', 400, 'Invalid establishment or service ID parameter.');
+            }
+
+            const service = await this.serviceService.getSpecificOwnedService(establishmentId, serviceId);
+            const outputDto = mapToAdminServiceDto(service.get({ plain: true }));
+            res.status(200).json(outputDto);
+
         } catch (error) {
             next(error);
         }

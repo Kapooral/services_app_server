@@ -269,6 +269,83 @@ describe('Service Routes Integration Tests', () => {
     });
 
     // =========================================================================
+    // Tests pour GET /api/users/me/establishments/:establishmentId/services/:serviceId (Admin Detail)
+    // =========================================================================
+    describe('GET /api/users/me/establishments/:establishmentId/services/:serviceId (Admin Detail)', () => {
+        let routeGetOwnedService: string;
+        let routeGetOtherService: string;
+        let routeGetOwnedServiceInOtherEstab: string;
+
+        beforeEach(() => {
+            // Construire les URLs pour les tests
+            routeGetOwnedService = `/api/users/me/establishments/${ownedEstablishment.id}/services/${ownedServiceId}`;
+            routeGetOtherService = `/api/users/me/establishments/${otherEstablishment.id}/services/${otherServiceId}`;
+            // Scénario où le service appartient à l'autre mais on utilise l'ID de l'établissement possédé
+            routeGetOwnedServiceInOtherEstab = `/api/users/me/establishments/${ownedEstablishment.id}/services/${otherServiceId}`;
+        });
+
+        it('should return the specific owned service details (200)', async () => {
+            const response = await ownerAgent
+                .get(routeGetOwnedService)
+                .set('Authorization', `Bearer ${ownerAccessToken}`);
+            expect(response.status).toBe(200);
+            expect(response.body.id).toBe(ownedServiceId);
+            expect(response.body.establishment_id).toBe(ownedEstablishment.id);
+            expect(response.body.name).toBe("Base Owned Service"); // Vérifier une donnée spécifique
+        });
+
+        it('should return 401 if user is not authenticated', async () => {
+            const response = await supertest(app).get(routeGetOwnedService);
+            expect(response.status).toBe(401);
+        });
+
+        it('should return 403 if user does not have ESTABLISHMENT_ADMIN role', async () => {
+            // Le client essaie d'accéder à un service via la route admin
+            const response = await clientAgent
+                .get(routeGetOwnedService)
+                .set('Authorization', `Bearer ${clientAccessToken}`);
+            // Bloqué par le requireRole sur /api/users/me/establishments
+            expect(response.status).toBe(403);
+        });
+
+        it('should return 404 if user tries to access service via an establishment they dont own', async () => {
+            // Owner essaie d'accéder via otherEstablishment.id (même si otherServiceId existe)
+            const response = await ownerAgent
+                .get(routeGetOtherService) // Utilise otherEstablishment.id et otherServiceId
+                .set('Authorization', `Bearer ${ownerAccessToken}`);
+            // Bloqué par ensureOwnsEstablishment sur l'ID de l'établissement
+            expect(response.status).toBe(404);
+        });
+
+        it('should return 404 if the service ID does not belong to the specified owned establishment', async () => {
+            // Owner essaie d'accéder à otherServiceId via son propre establishmentId
+            const response = await ownerAgent
+                .get(routeGetOwnedServiceInOtherEstab)
+                .set('Authorization', `Bearer ${ownerAccessToken}`);
+            // Le service getSpecificOwnedService ne trouvera pas de service correspondant aux deux IDs
+            expect(response.status).toBe(404);
+        });
+
+
+        it('should return 404 if service ID does not exist (within an owned establishment context)', async () => {
+            const routeNonExistentService = `/api/users/me/establishments/${ownedEstablishment.id}/services/999999`;
+            const response = await ownerAgent
+                .get(routeNonExistentService)
+                .set('Authorization', `Bearer ${ownerAccessToken}`);
+            expect(response.status).toBe(404);
+        });
+
+        it('should return 404 if establishment ID does not exist', async () => {
+            const routeNonExistentEstab = `/api/users/me/establishments/999999/services/${ownedServiceId}`;
+            const response = await ownerAgent
+                .get(routeNonExistentEstab)
+                .set('Authorization', `Bearer ${ownerAccessToken}`);
+            // Bloqué par ensureOwnsEstablishment
+            expect(response.status).toBe(404);
+        });
+    });
+
+    // =========================================================================
     // Tests pour GET /api/establishments/:id/services (Public)
     // =========================================================================
     describe('GET /api/establishments/:id/services (Public)', () => {

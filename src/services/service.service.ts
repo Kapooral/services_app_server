@@ -70,6 +70,24 @@ export class ServiceService {
     // --- Méthodes agissant sur un service par son ID (appelées via /api/services/:serviceId) ---
 
     /**
+     * Récupère un service spécifique en vérifiant qu'il appartient bien
+     * à l'établissement donné. Retourne null si non trouvé.
+     * L'ownership de l'établissement parent est vérifié en amont.
+     */
+    async getSpecificOwnedService(establishmentId: number, serviceId: number): Promise<Service> {
+        const service = await this.serviceModel.findOne({
+            where: {
+                id: serviceId,
+                establishment_id: establishmentId // Assure l'appartenance
+            }
+            // Peut inclure des associations si nécessaire pour le DTO admin
+            // include: [...]
+        });
+        if (!service) { throw new ServiceNotFoundError(); }
+        return service
+    }
+
+    /**
      * Met à jour un service spécifique par son ID.
      * L'ownership est vérifié en amont par le middleware requireServiceOwner.
      */
