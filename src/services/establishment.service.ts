@@ -5,11 +5,12 @@ import Establishment, { EstablishmentAttributes } from '../models/Establishment'
 import User from '../models/User';
 import Role, { ROLES } from '../models/Role'; // Importer ROLES aussi
 import AvailabilityRule, { AvailabilityRuleAttributes } from '../models/AvailabilityRule';
-import AvailabilityOverride, { AvailabilityOverrideAttributes } from '../models/AvailabilityOverride';
+import AvailabilityOverride, { AvailabilityOverrideCreationAttributes } from '../models/AvailabilityOverride';
 import Country from '../models/Country'; // Importer le modèle Country
 import { CreateEstablishmentDto, UpdateEstablishmentDto } from '../dtos/establishment.validation';
-import { CreateAvailabilityRuleDto } from '../dtos/availability.validation';
-import { CreateAvailabilityOverrideDto, UpdateAvailabilityOverrideDto } from '../dtos/availability.validation';
+import {
+    CreateAvailabilityRuleDto, UpdateAvailabilityRuleDto, CreateAvailabilityOverrideDto,
+    UpdateAvailabilityOverrideDto, MAX_OVERRIDE_DURATION_MS } from '../dtos/availability.validation';
 import {
     EstablishmentNotFoundError,
     DuplicateSiretError,
@@ -363,6 +364,34 @@ export class EstablishmentService {
     }
 
     /**
+     * Met à jour une règle de disponibilité par son ID.
+     * Vérifie les conflits si le jour de la semaine change.
+     * L'ownership est vérifié par le middleware requireRuleOwner.
+     */
+    async updateAvailabilityRuleById(ruleId: number, data: UpdateAvailabilityRuleDto): Promise<AvailabilityRule> {
+        const rule = await this.availabilityRuleModel.findByPk(ruleId);
+        if (!rule) {
+            throw new AvailabilityRuleNotFoundError();
+        }
+
+        if (data.day_of_week !== undefined && data.day_of_week !== rule.day_of_week) {
+            const conflictCheck = await this.availabilityRuleModel.findOne({
+                where: {
+                    establishment_id: rule.establishment_id,
+                    day_of_week: data.day_of_week,
+                    id: { [Op.ne]: ruleId }
+                },
+                attributes: ['id']
+            });
+            if (conflictCheck) {
+                throw new AvailabilityRuleConflictError(`An availability rule already exists for the target day ${data.day_of_week}.`);
+            }
+        }
+        await rule.update(data);
+        return rule;
+    }
+
+    /**
      * Supprime une règle de disponibilité par son ID.
      * L'ownership est vérifié par le middleware requireRuleOwner.
      */
@@ -381,30 +410,25 @@ export class EstablishmentService {
      * L'ownership est vérifié en amont.
      */
     async createAvailabilityOverrideForId(establishmentId: number, data: CreateAvailabilityOverrideDto): Promise<AvailabilityOverride> {
-        // Ajouter des validations de conflit si nécessaire (chevauchement d'overrides?)
-        const newOverride = await this.availabilityOverrideModel.create({
-            ...data,
+        const createData: AvailabilityOverrideCreationAttributes = {
             establishment_id: establishmentId,
-        });
-        return newOverride;
+            start_datetime: data.start_datetime!, // '!' car Zod l'a validé comme non-undefined
+            end_datetime: data.end_datetime!,   // '!' car Zod l'a validé comme non-undefined
+            is_available: data.is_available!,   // '!' car Zod l'a validé comme non-undefined
+            reason: data.reason ?? null // Garder le null si fourni
+        };
+        const newOverride = await this.availabilityOverrideModel.create(createData);
+
+        return newOverride
     }
 
     /**
-     * Récupère toutes les exceptions de disponibilité pour un établissement.
+     * Récupère toutes les règles de disponibilité pour un établissement.
      * L'ownership est vérifié en amont.
-     * Peut accepter des options pour filtrer par période.
      */
     async getAvailabilityOverridesForId(establishmentId: number, options: FindOptions = {}): Promise<AvailabilityOverride[]> {
-        const defaultOptions: FindOptions = {
-            where: { establishment_id: establishmentId },
-            order: [['start_datetime', 'ASC']],
-            // Sélectionner tous les attributs par défaut
-        };
-        const mergedOptions = {
-            ...defaultOptions,
-            ...options,
-            where: { ...defaultOptions.where, ...options.where }
-        };
+        const defaultOptions: FindOptions = { where: { establishment_id: establishmentId }, order: [['start_datetime', 'ASC']]};
+        const mergedOptions = { ...defaultOptions, ...options, where: { ...defaultOptions.where, ...options.where } };
         return this.availabilityOverrideModel.findAll(mergedOptions);
     }
 
@@ -418,15 +442,25 @@ export class EstablishmentService {
             throw new AvailabilityOverrideNotFoundError();
         }
 
-        // Valider les dates si les deux sont fournies dans la mise à jour partielle
-        const checkData = { ...override.get({ plain: true }), ...data }; // Fusionner ancien et nouveau pour validation
-        if (checkData.start_datetime >= checkData.end_datetime) {
+        // Déterminer les dates finales après la mise à jour potentielle
+        const finalStartDate = data.start_datetime ?? override.start_datetime;
+        const finalEndDate = data.end_datetime ?? override.end_datetime;
+
+        // Valider start < end (déjà fait dans Zod si les deux sont fournis, mais double check)
+        if (finalStartDate >= finalEndDate) {
             throw new AppError('InvalidInput', 400, 'Start date/time must be before end date/time');
         }
 
+        // *** NOUVELLE VALIDATION : Durée Maximale ***
+        const durationMs = finalEndDate.getTime() - finalStartDate.getTime();
+        if (durationMs > MAX_OVERRIDE_DURATION_MS) {
+            const maxYears = MAX_OVERRIDE_DURATION_MS / (366 * 24 * 60 * 60 * 1000); // Re-calculer pour message
+            throw new AppError('Validation Error', 400, `Availability override duration cannot exceed ${maxYears.toFixed(0)} year(s)`);
+        }
+
+        // Appliquer la mise à jour partielle
         await override.update(data);
-        // Re-fetch pour être sûr
-        return (await this.availabilityOverrideModel.findByPk(overrideId))!;
+        return override; // Retourne l'instance mise à jour
     }
 
     /**
@@ -435,9 +469,7 @@ export class EstablishmentService {
      */
     async deleteAvailabilityOverrideById(overrideId: number): Promise<void> {
         const override = await this.availabilityOverrideModel.findByPk(overrideId, { attributes: ['id'] });
-        if (!override) {
-            throw new AvailabilityOverrideNotFoundError();
-        }
+        if (!override) { throw new AvailabilityOverrideNotFoundError(); }
         await override.destroy();
     }
 }

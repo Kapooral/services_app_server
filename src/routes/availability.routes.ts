@@ -11,6 +11,7 @@ export const createAvailabilityRouter = (
 
     const establishmentController = new EstablishmentController(establishmentService);
 
+    router.put('/rules/:ruleId', requireAuth, requireRuleOwner, verifyCsrfToken, establishmentController.updateRule);
     router.delete('/rules/:ruleId', requireAuth, requireRuleOwner, verifyCsrfToken, establishmentController.deleteRule);
     router.put('/overrides/:overrideId', requireAuth, requireOverrideOwner, verifyCsrfToken, establishmentController.updateOverride);
     router.delete('/overrides/:overrideId', requireAuth, requireOverrideOwner, verifyCsrfToken, establishmentController.deleteOverride);

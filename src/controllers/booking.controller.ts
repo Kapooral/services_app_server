@@ -3,7 +3,8 @@ import { Request, Response, NextFunction } from 'express';
 import { BookingService } from '../services/booking.service';
 
 import {
-    CreateBookingSchema, CreateBookingDto, UpdateBookingStatusSchema, UpdateBookingStatusDto
+    CreateBookingSchema, CreateBookingDto, UpdateBookingStatusSchema, UpdateBookingStatusDto,
+    mapToAdminBookingDto, AdminBookingOutputDto
 } from '../dtos/booking.validation';
 
 import { AppError } from '../errors/app.errors';
@@ -29,11 +30,9 @@ export class BookingController {
         try {
             if (!req.user || typeof req.user.id !== 'number') throw new AuthenticationError();
             const createDto: CreateBookingDto = CreateBookingSchema.parse(req.body);
-
             const newBooking = await this.bookingService.createBooking(req.user.id, createDto);
-
-            // TODO: Appliquer mapToPublicBookingDto si nécessaire
-            res.status(201).json(newBooking.get({ plain: true }));
+            const outputDto = mapToAdminBookingDto(newBooking);
+            res.status(201).json(outputDto);
         } catch (error) {
             next(error); // Gère Zod, ServiceNotFound, Conflict, etc.
         }
@@ -43,24 +42,14 @@ export class BookingController {
     async getUserBookings(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
             if (!req.user || typeof req.user.id !== 'number') throw new AuthenticationError();
-
-            // TODO: Extraire et valider les query params (pagination, filtres statut/date)
             const page = parseInt(req.query.page as string || '1', 10);
             const limit = parseInt(req.query.limit as string || '10', 10);
+            if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > 100) { throw new AppError('InvalidParameter', 400, 'Invalid pagination parameters.'); }
             const offset = (page - 1) * limit;
-            // Autres filtres à ajouter ici
-
-            const { rows, count } = await this.bookingService.findUserBookings(req.user.id, { limit, offset /*, where: filters */ });
-
-            // TODO: mapToPublicBookingDto si nécessaire
+            const { rows, count } = await this.bookingService.findUserBookings(req.user.id, { limit, offset });
             res.status(200).json({
                 data: rows.map(b => b.get({ plain: true })),
-                pagination: {
-                    totalItems: count,
-                    currentPage: page,
-                    itemsPerPage: limit,
-                    totalPages: Math.ceil(count / limit)
-                }
+                pagination: { totalItems: count, currentPage: page, itemsPerPage: limit, totalPages: Math.ceil(count / limit) }
             });
         } catch (error) {
             next(error);
@@ -70,25 +59,19 @@ export class BookingController {
     // GET /establishments/my/bookings
     async getEstablishmentBookings(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
-            if (!req.user || typeof req.user.id !== 'number') throw new AuthenticationError();
-
-            // TODO: Extraire et valider les query params (pagination, filtres statut/date/user)
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            if (isNaN(establishmentId)) { throw new AppError('InvalidParameter', 400, 'Invalid establishment ID parameter.'); }
             const page = parseInt(req.query.page as string || '1', 10);
             const limit = parseInt(req.query.limit as string || '10', 10);
+            if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > 100) { throw new AppError('InvalidParameter', 400, 'Invalid pagination parameters.'); }
             const offset = (page - 1) * limit;
-            // Autres filtres
 
-            const { rows, count } = await this.bookingService.findEstablishmentBookings(req.user.id, { limit, offset /*, where: filters */ });
+            const { rows, count } = await this.bookingService.findBookingsForEstablishment(establishmentId, { limit, offset });
+            const data: AdminBookingOutputDto[] = rows.map(booking => mapToAdminBookingDto(booking));
 
-            // TODO: mapToAdminBookingDto si nécessaire
             res.status(200).json({
-                data: rows.map(b => b.get({ plain: true })),
-                pagination: {
-                    totalItems: count,
-                    currentPage: page,
-                    itemsPerPage: limit,
-                    totalPages: Math.ceil(count / limit)
-                }
+                data: data,
+                pagination: { totalItems: count, currentPage: page, itemsPerPage: limit, totalPages: Math.ceil(count / limit) }
             });
         } catch (error) {
             next(error);
@@ -103,14 +86,12 @@ export class BookingController {
             if (isNaN(bookingId)) throw new AppError('InvalidParameter', 400, 'Invalid booking ID.');
 
             const booking = await this.bookingService.findBookingById(bookingId);
-            if (!booking) {
-                throw new BookingNotFoundError();
-            }
+            if (!booking) { throw new BookingNotFoundError(); }
+            const outputDto = mapToAdminBookingDto(booking);
 
-            res.status(200).json(booking.get({ plain: true }));
-
+            res.status(200).json(outputDto);
         } catch (error) {
-            next(error); // Gère BookingNotFound, etc.
+            next(error);
         }
     }
 
@@ -121,11 +102,9 @@ export class BookingController {
             const bookingId = parseInt(req.params.bookingId, 10);
             if (isNaN(bookingId)) throw new AppError('InvalidParameter', 400, 'Invalid booking ID.');
 
-            // Le service cancelBookingByUser vérifie l'ownership et les règles d'annulation
             const cancelledBooking = await this.bookingService.cancelBookingByUser(bookingId, req.user.id);
-
-            // TODO: mapToPublicBookingDto ?
-            res.status(200).json(cancelledBooking.get({ plain: true }));
+            const outputDto = mapToAdminBookingDto(cancelledBooking);
+            res.status(200).json(outputDto);
 
         } catch (error) {
             next(error); // Gère BookingNotFound, BookingOwnershipError, CancellationNotAllowedError, InvalidBookingOperationError
@@ -140,12 +119,10 @@ export class BookingController {
             if (isNaN(bookingId)) throw new AppError('InvalidParameter', 400, 'Invalid booking ID.');
 
             const updateDto: UpdateBookingStatusDto = UpdateBookingStatusSchema.parse(req.body);
-
-            // Le service updateBookingStatusByAdmin vérifie l'ownership admin et la transition de statut
             const updatedBooking = await this.bookingService.updateBookingStatusByAdmin(bookingId, req.user.id, updateDto);
+            const outputDto = mapToAdminBookingDto(updatedBooking);
 
-            // TODO: mapToAdminBookingDto ?
-            res.status(200).json(updatedBooking.get({ plain: true }));
+            res.status(200).json(outputDto);
 
         } catch (error) {
             next(error); // Gère Zod, BookingNotFound, BookingOwnershipError, InvalidStatusTransitionError

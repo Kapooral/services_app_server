@@ -293,18 +293,23 @@ export class BookingService {
         return this.bookingModel.findAndCountAll(mergedOptions);
     }
 
-    async findEstablishmentBookings(adminUserId: number, options: FindOptions = {}): Promise<{ rows: Booking[]; count: number }> {
-        const establishments = await this.establishmentService.findEstablishmentsByOwner(adminUserId, { attributes: ['id'] });
-        if (!establishments || establishments.length === 0) { return { rows: [], count: 0 }; }
-        const establishmentId = establishments[0].id; // Prend le premier établissement
-
+    /**
+     * Récupère les réservations pour un établissement spécifique.
+     * La permission (ownership de l'établissement) est vérifiée en amont par le middleware.
+     */
+    async findBookingsForEstablishment(establishmentId: number, options: FindOptions = {}): Promise<{ rows: Booking[]; count: number }> {
         const defaultOptions: FindOptions = {
             where: { establishment_id: establishmentId },
             include: [
-                { model: db.Service, as: 'service', attributes: ['id', 'name'] },
-                { model: db.User, as: 'client', attributes: ['id', 'username', 'email', 'profile_picture'] }
+                {
+                    model: db.Service, as: 'service',
+                    attributes: ['id', 'name', 'duration_minutes']
+                },
+                {
+                    model: db.User, as: 'client',
+                    attributes: ['id', 'username', 'email', 'profile_picture']
+                }
             ],
-            attributes: { exclude: ['user_notes'] },
             order: [['start_datetime', 'ASC']],
         };
         const mergedOptions = { ...defaultOptions, ...options, where: { ...defaultOptions.where, ...options.where } };
@@ -312,12 +317,11 @@ export class BookingService {
     }
 
     async findBookingById(bookingId: number): Promise<Booking | null> {
-        // La permission est supposée vérifiée en amont par ensureBookingOwnerOrAdmin
         const booking = await this.bookingModel.findByPk(bookingId, {
             include: [
-                { model: db.Service, as: 'service' },
+                { model: db.Service, as: 'service', attributes: ['id', 'name', 'duration_minutes'] },
                 { model: db.Establishment, as: 'establishment' },
-                { model: db.User, as: 'client', attributes: { exclude: ['password', 'salt'] } }
+                { model: db.User, as: 'client', attributes: ['id', 'username', 'email', 'profile_picture'] }
             ]
         });
         if (!booking) { throw new BookingNotFoundError(); }

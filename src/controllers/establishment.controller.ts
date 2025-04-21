@@ -11,7 +11,8 @@ import {
 import {
     CreateAvailabilityRuleSchema, CreateAvailabilityRuleDto,
     CreateAvailabilityOverrideSchema, CreateAvailabilityOverrideDto,
-    UpdateAvailabilityOverrideSchema, UpdateAvailabilityOverrideDto
+    UpdateAvailabilityOverrideSchema, UpdateAvailabilityOverrideDto,
+    UpdateAvailabilityRuleDto, UpdateAvailabilityRuleSchema
 } from '../dtos/availability.validation';
 
 import { AuthenticationError } from '../errors/auth.errors';
@@ -41,6 +42,7 @@ export class EstablishmentController {
         this.createMyOverride = this.createMyOverride.bind(this);
         this.getMyOverrides = this.getMyOverrides.bind(this);
         // Méthodes pour règles/overrides par leur ID (potentiellement appelées depuis le routeur /availability)
+        this.updateRule = this.updateRule.bind(this);
         this.deleteRule = this.deleteRule.bind(this);
         this.updateOverride = this.updateOverride.bind(this);
         this.deleteOverride = this.deleteOverride.bind(this);
@@ -262,6 +264,21 @@ export class EstablishmentController {
 
     // --- Méthodes pour DELETE/PUT par ID de Règle/Override (appelées depuis /availability routes) ---
     // Ces méthodes supposent que le middleware (requireRuleOwner/requireOverrideOwner) a déjà vérifié l'ownership
+    // PUT /api/availability/rules/:ruleId
+    async updateRule(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const ruleId = parseInt(req.params.ruleId, 10);
+            if (isNaN(ruleId)) throw new AppError('InvalidParameter', 400, 'Invalid rule ID.');
+
+            const updateDto: UpdateAvailabilityRuleDto = UpdateAvailabilityRuleSchema.parse(req.body);
+            const updatedRule = await this.establishmentService.updateAvailabilityRuleById(ruleId, updateDto);
+
+            res.status(200).json(updatedRule.get({ plain: true }));
+        } catch (error) {
+            next(error);
+        }
+    }
+
     async deleteRule(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
             const ruleId = parseInt(req.params.ruleId, 10);
