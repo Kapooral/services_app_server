@@ -49,7 +49,7 @@ const userService = new UserService(db.User, notificationService);
 const authService = new AuthService(userService, notificationService, db.User, db.RefreshToken, encryptionService); // Injecter encryptionService
 // Injecter les modèles nécessaires dans EstablishmentService
 const establishmentService = new EstablishmentService(db.Establishment, db.User, db.Role, db.AvailabilityRule, db.AvailabilityOverride, db.Country); // Ajout db.Country
-const availabilityService = new AvailabilityService(db.AvailabilityRule, db.AvailabilityOverride, establishmentService, db.Service, db.Booking);
+const availabilityService = new AvailabilityService();
 const serviceService = new ServiceService(db.Service, establishmentService); // Modèle Service et EstablishmentService
 const bookingService = new BookingService(db.Booking, db.Service, establishmentService, availabilityService, notificationService);
 
@@ -143,7 +143,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 process.on('uncaughtException', (error) => {
     console.error('💥 Uncaught Exception thrown:', error);
-    // Une exception non interceptée est souvent fatale, quitter est souvent nécessaire
     if (process.env.NODE_ENV === 'production') process.exit(1);
 });
 

@@ -10,29 +10,26 @@ import Country from '../models/Country'; // Importer le modèle Country
 import { CreateEstablishmentDto, UpdateEstablishmentDto } from '../dtos/establishment.validation';
 import {
     CreateAvailabilityRuleDto, UpdateAvailabilityRuleDto, CreateAvailabilityOverrideDto,
-    UpdateAvailabilityOverrideDto, MAX_OVERRIDE_DURATION_MS } from '../dtos/availability.validation';
+    UpdateAvailabilityOverrideDto, MAX_OVERRIDE_DURATION_YEARS } from '../dtos/availability.validation';
 import {
     EstablishmentNotFoundError,
     DuplicateSiretError,
-    AlreadyOwnerError, // Considérer si cette logique est toujours active
     InvalidSiretFormatError,
     EstablishmentProfilePictureNotFoundError,
     SiretValidationError,
-    SireneApiError // Si utilisé
 } from '../errors/establishment.errors';
 import {
     AvailabilityRuleNotFoundError,
     AvailabilityOverrideNotFoundError,
     AvailabilityRuleConflictError,
-    // AvailabilityOwnershipError // Normalement géré par middleware
 } from '../errors/availability.errors';
 import { UserNotFoundError } from '../errors/user.errors';
 import { fileService } from './file.service';
 import { AppError } from '../errors/app.errors';
 import { CountryNotFoundError } from "../errors/country.errors";
-// import { SireneService } from './sirene.service'; // Décommenter si utilisé
+import { isAfter, addYears } from 'date-fns';
 
-const ESTABLISHMENT_ADMIN_ROLE_NAME = ROLES.ESTABLISHMENT_ADMIN; // Utiliser l'enum importé
+const ESTABLISHMENT_ADMIN_ROLE_NAME = ROLES.ESTABLISHMENT_ADMIN;
 
 export class EstablishmentService {
     private establishmentModel: ModelCtor<Establishment>;
@@ -412,14 +409,12 @@ export class EstablishmentService {
     async createAvailabilityOverrideForId(establishmentId: number, data: CreateAvailabilityOverrideDto): Promise<AvailabilityOverride> {
         const createData: AvailabilityOverrideCreationAttributes = {
             establishment_id: establishmentId,
-            start_datetime: data.start_datetime!, // '!' car Zod l'a validé comme non-undefined
-            end_datetime: data.end_datetime!,   // '!' car Zod l'a validé comme non-undefined
-            is_available: data.is_available!,   // '!' car Zod l'a validé comme non-undefined
-            reason: data.reason ?? null // Garder le null si fourni
+            start_datetime: data.start_datetime, // Validé par Zod
+            end_datetime: data.end_datetime,     // Validé par Zod
+            is_available: data.is_available,     // Validé par Zod
+            reason: data.reason ?? null
         };
-        const newOverride = await this.availabilityOverrideModel.create(createData);
-
-        return newOverride
+        return await this.availabilityOverrideModel.create(createData);
     }
 
     /**
@@ -438,29 +433,28 @@ export class EstablishmentService {
      */
     async updateAvailabilityOverrideById(overrideId: number, data: UpdateAvailabilityOverrideDto): Promise<AvailabilityOverride> {
         const override = await this.availabilityOverrideModel.findByPk(overrideId);
-        if (!override) {
-            throw new AvailabilityOverrideNotFoundError();
+        if (!override) { throw new AvailabilityOverrideNotFoundError(); }
+
+        const proposedStartDate = data.start_datetime ?? override.start_datetime;
+        const proposedEndDate = data.end_datetime ?? override.end_datetime;
+
+        if (data.start_datetime) {
+            const now = new Date();
+            if (data.start_datetime.getTime() <= now.getTime()) {
+                throw new AppError('InvalidInput', 400, 'Start date/time cannot be set in the past');
+            }
         }
 
-        // Déterminer les dates finales après la mise à jour potentielle
-        const finalStartDate = data.start_datetime ?? override.start_datetime;
-        const finalEndDate = data.end_datetime ?? override.end_datetime;
-
-        // Valider start < end (déjà fait dans Zod si les deux sont fournis, mais double check)
-        if (finalStartDate >= finalEndDate) {
+        if (proposedStartDate >= proposedEndDate) {
             throw new AppError('InvalidInput', 400, 'Start date/time must be before end date/time');
         }
 
-        // *** NOUVELLE VALIDATION : Durée Maximale ***
-        const durationMs = finalEndDate.getTime() - finalStartDate.getTime();
-        if (durationMs > MAX_OVERRIDE_DURATION_MS) {
-            const maxYears = MAX_OVERRIDE_DURATION_MS / (366 * 24 * 60 * 60 * 1000); // Re-calculer pour message
-            throw new AppError('Validation Error', 400, `Availability override duration cannot exceed ${maxYears.toFixed(0)} year(s)`);
+        if (isAfter(proposedEndDate, addYears(proposedStartDate, MAX_OVERRIDE_DURATION_YEARS))) {
+            throw new AppError('Validation Error', 400, `Availability override duration cannot exceed ${MAX_OVERRIDE_DURATION_YEARS} year(s)`);
         }
 
-        // Appliquer la mise à jour partielle
         await override.update(data);
-        return override; // Retourne l'instance mise à jour
+        return override
     }
 
     /**

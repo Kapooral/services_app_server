@@ -5,11 +5,11 @@ import db from '../models';
 import {BookingStatus, PaymentStatus} from '../models/Booking';
 
 const NUMBER_OF_BOOKINGS_PER_USER = 3; // Nombre de réservations par utilisateur seedé
-const STARTING_USER_ID = 12; // Doit correspondre au seeder user
+const STARTING_USER_ID = 2; // Doit correspondre au seeder user
 const NUMBER_OF_USERS_SEEDED = 20; // Doit correspondre au seeder user
-const TARGET_SERVICE_ID = 2; // ID du service cible
+const TARGET_SERVICE_ID = 1; // ID du service cible
 // Suppose que l'établissement ID 1 existe et est valide
-const TARGET_ESTABLISHMENT_ID = 3;
+const TARGET_ESTABLISHMENT_ID = 1;
 
 module.exports = {
 	async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {

@@ -147,14 +147,13 @@ describe('Service Routes Integration Tests', () => {
             price: 50.00,
             currency: "EUR",
             capacity: 2,
-            is_active: true, // Ajouté (même si défaut)
-            is_promoted: false, // Ajouté (même si défaut)
-            discount_price: null, // Ajouté
-            discount_start_date: null, // Ajouté
-            discount_end_date: null // Ajouté
+            is_active: true,
+            is_promoted: false,
+            discount_price: null,
+            discount_start_date: null,
+            discount_end_date: null,
+            auto_confirm_bookings: true
         };
-        // Option B (si préférée): Retirer le type ': CreateServiceDto'
-        // const validServiceData = { ... };
 
         let routePrefix: string;
         beforeEach(() => {

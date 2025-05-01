@@ -15,6 +15,8 @@ const ServiceBaseSchema = z.object({
     discount_price: z.number().positive().optional().nullable(),
     discount_start_date: z.coerce.date().optional().nullable(),
     discount_end_date: z.coerce.date().optional().nullable(),
+    cancellation_deadline_minutes: z.number().int().positive('Cancellation deadline must be a positive number of minutes').optional().nullable(),
+    auto_confirm_bookings: z.boolean().optional().default(true),
 });
 
 // --- Schéma pour la Création (avec le refine pour les dates de discount) ---

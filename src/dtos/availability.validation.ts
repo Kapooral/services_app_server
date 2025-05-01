@@ -1,64 +1,70 @@
 // src/dtos/availability.validation.ts
 import { z } from 'zod';
-
+import { isAfter, addYears } from 'date-fns'; // Use date-fns for reliable date comparisons
 
 // --- Constantes ---
-// Regex pour valider le format HH:MM:SS (permet 00:00:00 à 23:59:59)
-const timeFormatRegex = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+export const TimeFormatRegex = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
 export const MAX_OVERRIDE_DURATION_YEARS = 1; // Limite de durée en années
-export const MAX_OVERRIDE_DURATION_MS = MAX_OVERRIDE_DURATION_YEARS * 366 * 24 * 60 * 60 * 1000; // Approximation large (inclut année bissextile)
 
 // --- Règles de Disponibilité Récurrentes ---
-
-export const CreateAvailabilityRuleSchema = z.object({
-    day_of_week: z.number().int().min(0, 'Day must be between 0 (Sunday) and 6 (Saturday)').max(6),
-    start_time: z.string().regex(timeFormatRegex, 'Invalid start time format (HH:MM:SS)'),
-    end_time: z.string().regex(timeFormatRegex, 'Invalid end time format (HH:MM:SS)'),
-}).refine(data => data.start_time < data.end_time, { // Vérifier la logique horaire
-    message: "Start time must be strictly before end time",
-    path: ["end_time"],
+const AvailabilityRuleBaseSchema = z.object({
+    day_of_week: z.number().int().min(0).max(6),
+    start_time: z.string().regex(TimeFormatRegex, 'Invalid start time format (HH:MM:SS)'),
+    end_time: z.string().regex(TimeFormatRegex, 'Invalid end time format (HH:MM:SS)'),
 });
 
+export const CreateAvailabilityRuleSchema = AvailabilityRuleBaseSchema
+    .refine(data => data.start_time < data.end_time, {
+        message: "Start time must be strictly before end time",
+        path: ["end_time"],
+    });
 export type CreateAvailabilityRuleDto = z.infer<typeof CreateAvailabilityRuleSchema>;
-export const UpdateAvailabilityRuleSchema = CreateAvailabilityRuleSchema;
+
+export const UpdateAvailabilityRuleSchema = AvailabilityRuleBaseSchema
+    .partial()
+    .refine(data => Object.keys(data).length > 0, {
+        message: "Update data cannot be empty",
+    })
+    .refine(data => !(data.start_time && data.end_time && data.start_time >= data.end_time), {
+        message: "Start time must be strictly before end time when both are provided",
+        path: ["end_time"],
+    });
 export type UpdateAvailabilityRuleDto = z.infer<typeof UpdateAvailabilityRuleSchema>;
+
 
 // --- Exceptions de Disponibilité (Overrides) ---
 
-const AvailabilityOverrideBaseSchema = z.object({
+// Schema pour la Création (validations complètes ici)
+export const CreateAvailabilityOverrideSchema = z.object({
+    start_datetime: z.coerce.date({ required_error: "Start date/time is required", invalid_type_error: "Invalid start date/time format" }),
+    end_datetime: z.coerce.date({ required_error: "End date/time is required", invalid_type_error: "Invalid end date/time format" }),
+    is_available: z.boolean({ required_error: "Availability status (is_available) is required" }),
+    reason: z.string().max(255).optional().nullable(),
+})
+    .refine(data => isAfter(data.end_datetime, data.start_datetime), {
+        message: "End date/time must be after start date/time",
+        path: ["end_datetime"],
+    })
+    .refine(data => isAfter(data.start_datetime, new Date()), { // Le refine passe si la date est bien APRES maintenant
+        message: "Start date/time cannot be in the past",
+        path: ["start_datetime"],
+    })
+    .refine(data => !isAfter(data.end_datetime, addYears(data.start_datetime, MAX_OVERRIDE_DURATION_YEARS)), {
+        message: `Availability override duration cannot exceed ${MAX_OVERRIDE_DURATION_YEARS} year(s)`,
+        path: ["end_datetime"],
+    });
+export type CreateAvailabilityOverrideDto = z.infer<typeof CreateAvailabilityOverrideSchema>;
+
+// Schema pour la Mise à Jour (Validations minimales - la logique métier est dans le service)
+export const UpdateAvailabilityOverrideSchema = z.object({
     start_datetime: z.coerce.date({ invalid_type_error: "Invalid start date/time format" }).optional(),
     end_datetime: z.coerce.date({ invalid_type_error: "Invalid end date/time format" }).optional(),
     is_available: z.boolean().optional(),
     reason: z.string().max(255).optional().nullable(),
-});
-
-export const CreateAvailabilityOverrideSchema = AvailabilityOverrideBaseSchema
-    // Assurer que les champs requis pour la création sont présents
-    .refine(data => data.start_datetime !== undefined, { message: "Start date/time is required", path: ["start_datetime"] })
-    .refine(data => data.end_datetime !== undefined, { message: "End date/time is required", path: ["end_datetime"] })
-    .refine(data => data.is_available !== undefined, { message: "Availability status (is_available) is required", path: ["is_available"] })
-    // Raffinements pour la création
-    .refine(data => data.start_datetime! < data.end_datetime!, { // '!' car validé par refines précédents
-        message: "Start date/time must be before end date/time", path: ["end_datetime"],
-    })
-    .refine(data => data.start_datetime! >= new Date(Date.now() - 60000), { // Permettre une marge de 1 min pour éviter les erreurs de synchro
-        message: "Start date/time cannot be in the past", path: ["start_datetime"],
-    })
-    .refine(data => (data.end_datetime!.getTime() - data.start_datetime!.getTime()) <= MAX_OVERRIDE_DURATION_MS, {
-        message: `Availability override duration cannot exceed ${MAX_OVERRIDE_DURATION_YEARS} year(s)`, path: ["end_datetime"],
-    });
-export type CreateAvailabilityOverrideDto = z.infer<typeof CreateAvailabilityOverrideSchema>;
-
-export const UpdateAvailabilityOverrideSchema = AvailabilityOverrideBaseSchema
-    .partial() // Tous les champs sont optionnels pour la mise à jour
-    .refine(data => Object.keys(data).length > 0, { message: "Update data cannot be empty" })
-    // Valider start < end seulement si les deux sont fournis dans l'update
-    .refine(data => !(data.start_datetime && data.end_datetime && data.start_datetime >= data.end_datetime), {
-        message: "Start date/time must be before end date/time when both are updated", path: ["end_datetime"],
-    })
-    // Valider que start_datetime n'est pas dans le passé seulement s'il est fourni
-    .refine(data => !(data.start_datetime && data.start_datetime < new Date(Date.now() - 60000)), {
-        message: "Start date/time cannot be set in the past", path: ["start_datetime"],
+})
+    .partial()
+    .refine(data => Object.keys(data).length > 0, {
+        message: "Update data cannot be empty",
     });
 export type UpdateAvailabilityOverrideDto = z.infer<typeof UpdateAvailabilityOverrideSchema>;
 

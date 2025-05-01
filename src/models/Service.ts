@@ -17,11 +17,13 @@ interface ServiceAttributes {
     discount_price?: number | null;
     discount_start_date?: Date | null;
     discount_end_date?: Date | null;
+    cancellation_deadline_minutes?: number | null;
+    auto_confirm_bookings: boolean;
     createdAt?: Date;
     updatedAt?: Date;
 }
 
-interface ServiceCreationAttributes extends Optional<ServiceAttributes, 'id' | 'description' | 'capacity' | 'is_active' | 'is_promoted' | 'discount_price' | 'discount_start_date' | 'discount_end_date' | 'createdAt' | 'updatedAt'> {}
+interface ServiceCreationAttributes extends Optional<ServiceAttributes, 'id' | 'description' | 'capacity' | 'is_active' | 'is_promoted' | 'discount_price' | 'discount_start_date' | 'discount_end_date' | 'cancellation_deadline_minutes' | 'auto_confirm_bookings' | 'createdAt' | 'updatedAt'> {}
 
 class Service extends Model<ServiceAttributes, ServiceCreationAttributes> implements ServiceAttributes {
     public id!: number;
@@ -37,6 +39,8 @@ class Service extends Model<ServiceAttributes, ServiceCreationAttributes> implem
     public discount_price?: number | null;
     public discount_start_date?: Date | null;
     public discount_end_date?: Date | null;
+    public cancellation_deadline_minutes?: number | null;
+    public auto_confirm_bookings!: boolean;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -76,6 +80,8 @@ export const initService = (sequelize: Sequelize) => {
             discount_price: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
             discount_start_date: { type: DataTypes.DATE, allowNull: true },
             discount_end_date: { type: DataTypes.DATE, allowNull: true },
+            cancellation_deadline_minutes: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+            auto_confirm_bookings: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
         },
         {
             sequelize,

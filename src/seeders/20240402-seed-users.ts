@@ -7,7 +7,7 @@ import { ROLES } from '../models/Role';
 
 const SALT_ROUNDS = 10;
 const NUMBER_OF_USERS_TO_SEED = 20;
-const STARTING_USER_ID = 12;
+const STARTING_USER_ID = 2;
 
 module.exports = {
     async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {

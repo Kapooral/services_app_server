@@ -18,6 +18,7 @@
     *   Chiffrement des Données Sensibles (Secrets TOTP)
     *   Gestion des Fichiers Uploadés (Stockage Local)
     *   Rôles et Permissions (Basés sur les Rôles et la Propriété)
+    *   **Logique des Statuts de Réservation (Mise à jour)**
 4.  Composants Principaux
     *   Point d'Entrée (`server.ts`)
     *   Modèles (`src/models/`)
@@ -33,19 +34,19 @@
     *   Authentification (`/api/auth`)
     *   Utilisateurs (`/api/users`)
     *   Établissements (`/api/establishments` et `/api/users/me/establishments`)
-    *   Services (`/api/services` et routes imbriquées)
-    *   Disponibilité (`/api/availability` et routes imbriquées)
-    *   Réservations (`/api/bookings` et routes imbriquées)
+    *   Services (`/api/services` et routes imbriquées) **(Mise à jour)**
+    *   Disponibilité (`/api/availability` et routes imbriquées) **(Mise à jour)**
+    *   Réservations (`/api/bookings` et routes imbriquées) **(Mise à jour)**
 6.  Configuration Essentielle (`.env`)
 7.  Exécution du Projet
-8.  Gestion des Erreurs
-9.  Considérations Futures / TODOs
+8.  Gestion des Erreurs **(Mise à jour)**
+9.  Considérations Futures / TODOs **(Mise à jour)**
 
 ---
 
 **1. Introduction**
 
-Ce document détaille l'architecture, les composants, les concepts et les fonctionnalités du backend de l'application "Calendrier Événementiel" (ci-après dénommée APP_NAME). L'objectif principal de ce backend est de fournir une API RESTful sécurisée, robuste et scalable pour la gestion des comptes utilisateurs, l'authentification multi-facteurs, la gestion des établissements, des services proposés, des disponibilités et des réservations. Cette documentation reflète l'état actuel après une refonte des routes, l'implémentation de nouvelles fonctionnalités et validations, et une phase de correction basée sur des tests d'intégration.
+Ce document détaille l'architecture, les composants, les concepts et les fonctionnalités du backend de l'application "Calendrier Événementiel" (ci-après dénommée APP_NAME). L'objectif principal de ce backend est de fournir une API RESTful sécurisée, robuste et scalable pour la gestion des comptes utilisateurs, l'authentification multi-facteurs, la gestion des établissements, des services proposés, des disponibilités et des réservations. **Cette version intègre une logique affinée pour la gestion des réservations (statut initial configurable, délai d'annulation par service, verrouillage des statuts finaux) et des validations plus robustes pour les exceptions de disponibilité.**
 
 **2. Architecture & Technologies**
 
@@ -97,6 +98,30 @@ Node.js, Express.js (v5), TypeScript, Sequelize (v6), MySQL (`mysql2`), Zod, JWT
 *   **Gestion des Fichiers Uploadés (Stockage Local) :** `multer` + `FileService`. Stockage dans `public/uploads/...`. URL relative en BDD. `express.static`.
 
 *   **Rôles et Permissions :** Rôles (`CLIENT`, `ESTABLISHMENT_ADMIN`, `SUPER_ADMIN`). Middlewares `requireAuth`, `requireRole`, `ensureSelf`. Ownership vérifié par `ensureOwnsEstablishment` (renvoie 404), `requireServiceOwner`/`requireRuleOwner`/`requireOverrideOwner` (renvoient 403), `ensureBookingOwnerOrAdmin`.
+
+*   **Logique des Statuts de Réservation (Mise à jour) :**
+    *   **Statut Initial :** Lors de la création (`POST /api/bookings`), le statut initial de la réservation est déterminé par le champ `auto_confirm_bookings` (boolean, défaut `true`) du `Service` associé :
+        *   `true` -> Statut initial `CONFIRMED`.
+        *   `false` -> Statut initial `PENDING_CONFIRMATION`.
+    *   **Annulation Client (`PATCH /api/bookings/:id/cancel`) :**
+        *   Possible uniquement si le statut actuel est `CONFIRMED` ou `PENDING_CONFIRMATION`.
+        *   Vérifie le délai défini dans `Service.cancellation_deadline_minutes` (entier, nullable, en minutes). Si `null` ou si le délai n'est pas dépassé, l'annulation est permise. Si le délai est dépassé, une erreur `403 Forbidden` (`CancellationNotAllowedError`) est retournée.
+        *   Passe le statut à `CANCELLED_BY_USER`.
+    *   **Mise à Jour par Admin Établissement (`PATCH /api/bookings/:id`) :**
+        *   Permet de mettre à jour le `status` et/ou `establishmentNotes`. Le champ `status` est optionnel dans le payload pour permettre la mise à jour des notes seules.
+        *   **Transitions Autorisées (par Admin Étab.) :**
+            *   `PENDING_CONFIRMATION` -> `CONFIRMED` ou `CANCELLED_BY_ESTABLISHMENT`.
+            *   `CONFIRMED` -> `COMPLETED`, `NO_SHOW`, ou `CANCELLED_BY_ESTABLISHMENT`.
+            *   `NO_SHOW` -> `COMPLETED` (correction possible).
+        *   Toute autre tentative de transition de statut par l'admin renvoie une erreur `400 Bad Request` (`InvalidStatusTransitionError`).
+    *   **Verrouillage des Statuts Finaux :** Les statuts suivants sont considérés comme finaux et ne peuvent plus être modifiés (ni par client, ni par admin via changement de statut) une fois atteints :
+        *   `CANCELLED_BY_USER`
+        *   `CANCELLED_BY_ESTABLISHMENT`
+        *   `CANCELLED_BY_ADMIN`
+        *   `COMPLETED`
+        *   `NO_SHOW` (sauf pour la transition spécifique vers `COMPLETED` par l'admin).
+        *   Toute tentative de modification du *statut* d'une réservation dans un état final (sauf `NO_SHOW` -> `COMPLETED`) renvoie une erreur `400 Bad Request` (`InvalidBookingOperationError`).
+    *   **Mise à Jour des Notes Admin :** L'admin peut mettre à jour `establishmentNotes` via `PATCH /api/bookings/:id` quel que soit le statut actuel de la réservation (y compris les statuts finaux), en envoyant uniquement le champ `establishmentNotes`.
 
 **4. Composants Principaux**
 
@@ -153,32 +178,32 @@ Node.js, Express.js (v5), TypeScript, Sequelize (v6), MySQL (`mysql2`), Zod, JWT
     *   `PATCH /api/users/me/establishments/:establishmentId/profile-picture`: (Auth + Admin + Ownership + CSRF + `multer`) Form-data: `profilePicture`. Réponse 200: `{ message, establishment: AdminEstablishmentDto }`. Erreurs 404, 400.
     *   `DELETE /api/users/me/establishments/:establishmentId/profile-picture`: (Auth + Admin + Ownership + CSRF) Réponse 200: `{ message, establishment: AdminEstablishmentDto }`. Erreur 404.
 
-*   **Services (`/api/services` et routes imbriquées)**
-    *   `POST /api/users/me/establishments/:establishmentId/services`: (Auth + Admin + Ownership + CSRF) Body: `CreateServiceDto`. Réponse 201: `AdminServiceDto`. Erreurs 404, 400.
+*   **Services (`/api/services` et routes imbriquées) (Mise à jour)**
+    *   `POST /api/users/me/establishments/:establishmentId/services`: (Auth + Admin + Ownership + CSRF) Body: `CreateServiceDto` **(inclut `cancellationDeadlineMinutes?: number | null`, `autoConfirmBookings?: boolean (défaut true)`)**. Réponse 201: `AdminServiceDto`. Erreurs 404, 400.
     *   `GET /api/users/me/establishments/:establishmentId/services`: (Auth + Admin + Ownership) Query: `?page`, `?limit`. Réponse 200: `{ data: [AdminServiceDto], pagination: {...} }`. Erreur 404.
     *   `GET /api/users/me/establishments/:establishmentId/services/:serviceId`: (Auth + Admin + Ownership) Réponse 200: `AdminServiceDto`. Erreur 404.
-    *   `PUT /api/services/:serviceId`: (Auth + `requireServiceOwner` + CSRF) Body: `UpdateServiceDto`. Réponse 200: `AdminServiceDto`. Erreurs 403, 404, 400.
+    *   `PUT /api/services/:serviceId`: (Auth + `requireServiceOwner` + CSRF) Body: `UpdateServiceDto` **(peut inclure `cancellationDeadlineMinutes?: number | null`, `autoConfirmBookings?: boolean`)**. Réponse 200: `AdminServiceDto`. Erreurs 403, 404, 400.
     *   `DELETE /api/services/:serviceId`: (Auth + `requireServiceOwner` + CSRF) Réponse 204. Erreurs 403, 404, 409.
     *   `GET /api/establishments/:id/services`: (Public) Réponse 200: `[PublicServiceOutputDto]`. Erreur 404.
-    *   `GET /api/services/:serviceId/availability`: (Public) Query: `?date=YYYY-MM-DD`. Réponse 200: `{ availableSlots: [ISOString] }`. Erreurs 404, 400.
+    *   `GET /api/services/:serviceId/availability`: (Public) Query: `?date=YYYY-MM-DD`. Réponse 200: `{ availableSlots: [ISOString] }`. Erreurs 404, 400. **Logique de calcul affinée.**
 
-*   **Disponibilité (`/api/availability` et routes imbriquées)**
+*   **Disponibilité (`/api/availability` et routes imbriquées) (Mise à jour)**
     *   `POST /api/users/me/establishments/:establishmentId/availability/rules`: (Auth + Admin + Ownership + CSRF) Body: `CreateAvailabilityRuleDto`. Réponse 201: `AvailabilityRule`. Erreurs 404, 400, 409.
     *   `GET /api/users/me/establishments/:establishmentId/availability/rules`: (Auth + Admin + Ownership) Réponse 200: `[AvailabilityRule]`. Erreur 404.
     *   `PUT /api/availability/rules/:ruleId`: (Auth + `requireRuleOwner` + CSRF) Body: `UpdateAvailabilityRuleDto`. Réponse 200: `AvailabilityRule`. Erreurs 403, 404, 400, 409.
     *   `DELETE /api/availability/rules/:ruleId`: (Auth + `requireRuleOwner` + CSRF) Réponse 204. Erreurs 403, 404.
-    *   `POST /api/users/me/establishments/:establishmentId/availability/overrides`: (Auth + Admin + Ownership + CSRF) Body: `CreateAvailabilityOverrideDto`. Réponse 201: `AvailabilityOverride`. Erreurs 404, 400.
+    *   `POST /api/users/me/establishments/:establishmentId/availability/overrides`: (Auth + Admin + Ownership + CSRF) Body: `CreateAvailabilityOverrideDto`. **Validation DTO renforcée (date passée, durée max, start < end)**. Réponse 201: `AvailabilityOverride`. Erreurs 404, 400.
     *   `GET /api/users/me/establishments/:establishmentId/availability/overrides`: (Auth + Admin + Ownership) Réponse 200: `[AvailabilityOverride]`. Erreur 404.
-    *   `PUT /api/availability/overrides/:overrideId`: (Auth + `requireOverrideOwner` + CSRF) Body: `UpdateAvailabilityOverrideDto`. Réponse 200: `AvailabilityOverride`. Erreurs 403, 404, 400.
+    *   `PUT /api/availability/overrides/:overrideId`: (Auth + `requireOverrideOwner` + CSRF) Body: `UpdateAvailabilityOverrideDto`. **Validation métier (date passée, durée max, start < end) effectuée dans le service**. Réponse 200: `AvailabilityOverride`. Erreurs 403, 404, 400.
     *   `DELETE /api/availability/overrides/:overrideId`: (Auth + `requireOverrideOwner` + CSRF) Réponse 204. Erreurs 403, 404.
 
-*   **Réservations (`/api/bookings` et routes imbriquées)**
-    *   `POST /api/bookings`: (Auth + CSRF) Body: `CreateBookingDto`. Réponse 201: `AdminBookingOutputDto`. Erreurs 404, 409, 400.
-    *   `GET /api/users/me/bookings`: (Auth) Query: `?page`, `?limit`. Réponse 200: `{ data: [Booking], pagination: {...} }` (format de sortie simple).
+*   **Réservations (`/api/bookings` et routes imbriquées) (Mise à jour)**
+    *   `POST /api/bookings`: (Auth + CSRF) Body: `CreateBookingDto`. **Statut initial (`CONFIRMED` ou `PENDING_CONFIRMATION`) dépend de `Service.autoConfirmBookings`**. Réponse 201: `AdminBookingOutputDto`. Erreurs 404, 409 (conflit de slot), 400.
+    *   `GET /api/users/me/bookings`: (Auth) Query: `?page`, `?limit`. Réponse 200: `{ data: [Booking], pagination: {...} }`.
     *   `GET /api/users/me/establishments/:establishmentId/bookings`: (Auth + Admin + Ownership) Query: `?page`, `?limit`. Réponse 200: `{ data: [AdminBookingOutputDto], pagination: {...} }`. Erreur 404.
     *   `GET /api/bookings/:bookingId`: (Auth + `ensureBookingOwnerOrAdmin`) Réponse 200: `AdminBookingOutputDto`. Erreur 404.
-    *   `PATCH /api/bookings/:bookingId/cancel`: (Auth + CSRF) Annulation par client. Réponse 200: `AdminBookingOutputDto`. Erreurs 403, 404, 400.
-    *   `PATCH /api/bookings/:bookingId`: (Auth + Admin + CSRF) Body: `UpdateBookingStatusDto`. Mise à jour statut par admin. Réponse 200: `AdminBookingOutputDto`. Erreurs 403, 404, 400.
+    *   `PATCH /api/bookings/:bookingId/cancel`: (Auth + CSRF) Annulation par client. **Vérifie `Service.cancellationDeadlineMinutes` et si statut actuel n'est pas final.** Réponse 200: `AdminBookingOutputDto`. Erreurs : `400 Bad Request` (statut final), `403 Forbidden` (délai dépassé ou non propriétaire), `404 Not Found`.
+    *   `PATCH /api/bookings/:bookingId`: (Auth + Admin + CSRF) Body: `UpdateBookingStatusDto` **(`status` optionnel)**. Mise à jour statut et/ou notes admin. **Valide transitions de statut autorisées et non-modification des statuts finaux (sauf NO_SHOW -> COMPLETED). Permet mise à jour `establishmentNotes` seule.** Réponse 200: `AdminBookingOutputDto`. Erreurs: `400 Bad Request` (statut final, transition invalide, payload vide), `403 Forbidden` (permission), `404 Not Found`.
 
 **6. Configuration Essentielle (`.env`)**
 
@@ -190,20 +215,30 @@ Node.js, Express.js (v5), TypeScript, Sequelize (v6), MySQL (`mysql2`), Zod, JWT
 
 **8. Gestion des Erreurs**
 
-(Description du `errorMiddleware`, `AppError`, `ZodError` et format de réponse JSON fournie précédemment.)
+*   (Description du `errorMiddleware`, `AppError`, `ZodError` et format de réponse JSON fournie précédemment.)
+*   **Nouvelles Erreurs/Comportements Spécifiques :**
+    *   `BookingService` lève `CancellationNotAllowedError` (-> 403) si délai dépassé.
+    *   `BookingService` lève `InvalidBookingOperationError` (-> 400) si opération sur statut final.
+    *   `BookingService` lève `InvalidStatusTransitionError` (-> 400) si transition admin invalide.
+    *   `BookingService` lève `BookingConflictError` (-> 409) si la vérification de disponibilité échoue lors de la création.
+    *   `EstablishmentService` lève `AppError('InvalidInput', 400, ...)` pour les validations métier (date passée, start<end) sur la mise à jour des overrides.
+    *   `CreateAvailabilityOverrideSchema` (Zod) valide la date de début non passée.
+    
 
 **9. Considérations Futures / TODOs**
 
 *   **Bug Connu :** Échec validation mot de passe actuel sur `PATCH /users/:id/password` et `PATCH /users/:id/email`. Nécessite investigation.
-*   **Couverture des Tests :** Compléter les tests `TODO` dans `user.routes.test.ts` (profil, suppression, image, vérif email). Ajouter tests pour les nouvelles validations Override.
+*   **Tests :** Ajouter des tests unitaires/intégration pour la logique de validation métier dans `EstablishmentService.updateAvailabilityOverrideById`.
 *   **Implémentation SMS Réelle.**
-*   **Validation SIRET Réelle.**
+*   **Validation SIRET Réelle.** (via `SireneService`?)
 *   **Stockage Fichiers Cloud.**
 *   **Intégration Paiements.**
-*   **Gestion Fine Permissions.**
+*   **Gestion Fine Permissions** (ex: Rôle `SUPER_ADMIN` pour certaines actions?).
 *   **Logging Avancé.**
-*   **Tâches Asynchrones.**
-*   **Documentation API Auto-générée (Swagger/OpenAPI).**
-*   **Sécurité Avancée.**
+*   **Tâches Asynchrones** (ex: pour notifications).
+*   **Documentation API Auto-générée** (Swagger/OpenAPI).
+*   **Sécurité Avancée** (Revue OWASP complète, etc.).
+*   **(Optionnel) Configuration Établissement/Service :** Permettre de choisir le statut initial des réservations (`CONFIRMED` vs `PENDING_CONFIRMATION`).
+*   **Amélioration Middleware Erreur :** Formater plus spécifiquement les messages d'erreur Zod (notamment pour `.refine()` sur objets).
 
 ---

@@ -18,9 +18,13 @@ export type CreateBookingDto = z.infer<typeof CreateBookingSchema>;
 export const UpdateBookingStatusSchema = z.object({
     status: z.nativeEnum(BookingStatus, {
         errorMap: (issue, ctx) => ({ message: 'Invalid booking status provided.' })
-    }),
+    }).optional(),
     establishmentNotes: z.string().max(1000).optional().nullable(),
-});
+})
+    .refine(data => data.status !== undefined || data.establishmentNotes !== undefined, {
+        message: "At least status or establishmentNotes must be provided for update.",
+    });
+
 export type UpdateBookingStatusDto = z.infer<typeof UpdateBookingStatusSchema>;
 
 

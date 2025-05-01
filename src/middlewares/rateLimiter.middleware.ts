@@ -11,7 +11,7 @@ const enableRateLimit = process.env.NODE_ENV !== 'test';
 
 export const apiLimiter = rateLimit({
     windowMs: generalWindowMs,
-    max: enableRateLimit ? 100 : Infinity,
+    max: 10000, // enableRateLimit ? 1000 : Infinity,
     message: { message: 'Too many requests from this IP, please try again after 15 minutes' },
 });
 
