@@ -1,10 +1,9 @@
 // src/dtos/booking.validation.ts
 import { z } from 'zod';
-import Booking, { BookingAttributes, BookingStatus, PaymentStatus } from '../models/Booking';
-// Importer les validateurs/types des entités associées si nécessaire pour le DTO
-import { UserAttributes } from '../models/User';
-import { ServiceAttributes } from '../models/Service';
-import { getAbsoluteProfilePictureURL } from '../utils/url.utils'; // Assumer l'existence de cet helper
+import { isValid, parseISO, startOfDay, endOfDay, addDays } from 'date-fns';
+import Booking, { BookingStatus, PaymentStatus } from '../models/Booking';
+
+import { getAbsoluteProfilePictureURL } from '../utils/url.utils';
 
 // --- DTOs pour la création/mise à jour (inchangés) ---
 export const CreateBookingSchema = z.object({
@@ -28,7 +27,6 @@ export const UpdateBookingStatusSchema = z.object({
 export type UpdateBookingStatusDto = z.infer<typeof UpdateBookingStatusSchema>;
 
 
-// --- NOUVEAU: Schéma pour les infos Client dans AdminBookingDto ---
 const AdminBookingClientInfoSchema = z.object({
     id: z.number(),
     username: z.string(),
@@ -68,7 +66,6 @@ export const AdminBookingOutputSchema = z.object({
 export type AdminBookingOutputDto = z.infer<typeof AdminBookingOutputSchema>;
 
 
-// --- NOUVEAU: Fonction de mapping pour la sortie admin ---
 export function mapToAdminBookingDto(booking: Booking): AdminBookingOutputDto {
     // Assurer que les associations sont chargées (le service devrait le faire)
     if (!booking.client && booking.user_id) { console.warn(`Booking ${booking.id} is missing client data despite having user_id.`); }
@@ -119,3 +116,49 @@ export function mapToAdminBookingDto(booking: Booking): AdminBookingOutputDto {
     }
     return result.data;
 }
+
+const allowedSortByFields = ['start_datetime', 'created_at', 'service_name', 'client_name', 'status'] as const; // Champs autorisés pour le tri
+
+export const GetEstablishmentBookingsQuerySchema = z.object({
+    page: z.coerce.number().int().positive("Page must be a positive integer.").optional().default(1),
+    limit: z.coerce.number().int().min(1, "Limit must be at least 1.").max(100, "Limit cannot exceed 100.").optional().default(10),
+    search: z.string().optional(),
+    status: z.string().optional().transform((val, ctx) => {
+        if (!val) return undefined;
+        const statuses = val.split(',');
+        const validStatuses: BookingStatus[] = [];
+        for (const s of statuses) {
+            if (s.trim() in BookingStatus) {
+                validStatuses.push(s.trim() as BookingStatus);
+            } else {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `Invalid status value provided: ${s.trim()}`,
+                });
+                return z.NEVER;
+            }
+        }
+        return validStatuses.length > 0 ? validStatuses : undefined;
+    }),
+    serviceId: z.coerce.number().int().positive("Service ID must be a positive integer.").optional(),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid startDate format (YYYY-MM-DD required)").optional()
+        .refine((val) => !val || isValid(parseISO(val)), { message: "Invalid startDate value" }),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid endDate format (YYYY-MM-DD required)").optional()
+        .refine((val) => !val || isValid(parseISO(val)), { message: "Invalid endDate value" }),
+    sortBy: z.enum(allowedSortByFields).optional().default('start_datetime'),
+    sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+})
+    .refine(data => {
+        if (data.endDate && !data.startDate) {
+            return false;
+        }
+        if (data.startDate && data.endDate) {
+            return startOfDay(parseISO(data.startDate)) <= startOfDay(parseISO(data.endDate));
+        }
+        return true;
+    }, {
+        message: "endDate must be after or the same as startDate",
+        path: ["endDate"],
+    });
+
+export type GetEstablishmentBookingsQueryDto = z.infer<typeof GetEstablishmentBookingsQuerySchema>;

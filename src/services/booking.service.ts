@@ -1,14 +1,16 @@
 // src/services/booking.service.ts
-import { ModelCtor, FindOptions, Op, Transaction, Includeable, Sequelize, UniqueConstraintError as SequelizeUniqueConstraintError } from 'sequelize';
+import { ModelCtor, FindOptions, Op, Transaction, Includeable, Sequelize, WhereOptions, OrderItem, UniqueConstraintError as SequelizeUniqueConstraintError } from 'sequelize';
 import db from '../models';
-import Booking, { BookingStatus, PaymentStatus } from '../models/Booking';
+import Booking, { BookingStatus, PaymentStatus, BookingAttributes } from '../models/Booking';
 import Service from '../models/Service';
 import Establishment from '../models/Establishment';
 import User from '../models/User';
 import { AvailabilityService } from './availability.service';
 import { EstablishmentService } from './establishment.service';
 import { INotificationService } from './notification.service';
-import { CreateBookingDto, UpdateBookingStatusDto } from '../dtos/booking.validation';
+import { CreateBookingDto, UpdateBookingStatusDto, GetEstablishmentBookingsQueryDto } from '../dtos/booking.validation';
+import { parseISO, startOfDay, endOfDay, addDays } from 'date-fns';
+
 import {
     BookingNotFoundError,
     BookingConflictError,
@@ -457,18 +459,70 @@ export class BookingService {
         return this.bookingModel.findAndCountAll(mergedOptions);
     }
 
-    async findBookingsForEstablishment(establishmentId: number, options: FindOptions = {}): Promise<{ rows: Booking[]; count: number }> {
-        const defaultOptions: FindOptions = {
-            where: { establishment_id: establishmentId },
-            include: adminBookingIncludes,
-            order: [['start_datetime', 'ASC']],
+    async findBookingsForEstablishment(establishmentId: number, queryParams: GetEstablishmentBookingsQueryDto): Promise<{ rows: Booking[]; count: number }> {
+        const {
+            page, limit, search, status, serviceId,
+            startDate, endDate, sortBy, sortOrder
+        } = queryParams;
+
+        const offset = (page - 1) * limit;
+        const findOptions: FindOptions = {
+            limit, offset,
+            where: {},
+            include: [], order: [], subQuery: false
         };
-        const mergedOptions: FindOptions = {
-            ...defaultOptions,
-            ...options,
-            where: { ...defaultOptions.where, ...options.where },
-        };
-        return this.bookingModel.findAndCountAll(mergedOptions);
+
+        const whereClause: WhereOptions<BookingAttributes> = { establishment_id: establishmentId };
+
+        if (status && status.length > 0) { whereClause.status = { [Op.in]: status }; }
+        if (serviceId) { whereClause.service_id = serviceId; }
+        if (startDate) {
+            const start = startOfDay(parseISO(startDate));
+            let end;
+            if (endDate) { end = endOfDay(parseISO(endDate)); }
+            else { end = endOfDay(parseISO(startDate)); }
+            whereClause.start_datetime = { [Op.between]: [start, end] };
+        }
+        else {
+            whereClause.start_datetime = { [Op.gte]: startOfDay(new Date()) };
+        }
+
+        let searchCondition = {};
+        if (search) {
+            const searchTerm = `%${search}%`;
+            const likeOperator = db.sequelize.getDialect() === 'postgres' ? Op.iLike : Op.like;
+            searchCondition = {
+                [Op.or]: [
+                    { '$client.username$': { [likeOperator]: searchTerm } },
+                    { '$client.email$': { [likeOperator]: searchTerm } },
+                    { '$booking.id$': { [likeOperator]: searchTerm } },
+                    { establishment_notes: { [likeOperator]: searchTerm } },
+                    { user_notes: { [likeOperator]: searchTerm } }
+                ]
+            };
+        }
+        findOptions.where = { ...whereClause, ...searchCondition  };
+
+        const clientInclude: Includeable = { model: db.User, as: 'client', attributes: ['id', 'username', 'email', 'profile_picture'], required: false };
+        const serviceInclude: Includeable = { model: db.Service, as: 'service', attributes: ['id', 'name', 'duration_minutes'], required: false };
+        findOptions.include = [clientInclude, serviceInclude];
+
+        const sortDirection = sortOrder.toUpperCase() as 'ASC' | 'DESC';
+        let orderItem: OrderItem;
+
+        switch (sortBy) {
+            case 'service_name':
+                orderItem = [{ model: db.Service, as: 'service' }, 'name', sortDirection];
+                break;
+            case 'client_name':
+                orderItem = [{ model: db.User, as: 'client' }, 'username', sortDirection];
+                break;
+            default:
+                orderItem = [sortBy, sortDirection];
+                break;
+        }
+        findOptions.order = [orderItem];
+        return this.bookingModel.findAndCountAll(findOptions);
     }
 
     async findBookingById(bookingId: number): Promise<Booking | null> {

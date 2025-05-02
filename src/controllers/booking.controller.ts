@@ -4,7 +4,7 @@ import { BookingService } from '../services/booking.service';
 
 import {
     CreateBookingSchema, CreateBookingDto, UpdateBookingStatusSchema, UpdateBookingStatusDto,
-    mapToAdminBookingDto, AdminBookingOutputDto
+    mapToAdminBookingDto, AdminBookingOutputDto, GetEstablishmentBookingsQuerySchema, GetEstablishmentBookingsQueryDto
 } from '../dtos/booking.validation';
 
 import { AppError } from '../errors/app.errors';
@@ -61,17 +61,22 @@ export class BookingController {
         try {
             const establishmentId = parseInt(req.params.establishmentId, 10);
             if (isNaN(establishmentId)) { throw new AppError('InvalidParameter', 400, 'Invalid establishment ID parameter.'); }
-            const page = parseInt(req.query.page as string || '1', 10);
-            const limit = parseInt(req.query.limit as string || '10', 10);
-            if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > 100) { throw new AppError('InvalidParameter', 400, 'Invalid pagination parameters.'); }
-            const offset = (page - 1) * limit;
 
-            const { rows, count } = await this.bookingService.findBookingsForEstablishment(establishmentId, { limit, offset });
+            const queryParams: GetEstablishmentBookingsQueryDto = GetEstablishmentBookingsQuerySchema.parse(req.query);
+
+            const { rows, count } = await this.bookingService.findBookingsForEstablishment(establishmentId, queryParams );
             const data: AdminBookingOutputDto[] = rows.map(booking => mapToAdminBookingDto(booking));
 
+            const totalPages = Math.ceil(count / queryParams.limit);
             res.status(200).json({
                 data: data,
-                pagination: { totalItems: count, currentPage: page, itemsPerPage: limit, totalPages: Math.ceil(count / limit) }
+                pagination: {
+                    totalItems: count,
+                    itemCount: rows.length,
+                    itemsPerPage: queryParams.limit,
+                    totalPages: totalPages,
+                    currentPage: queryParams.page
+                }
             });
         } catch (error) {
             next(error);

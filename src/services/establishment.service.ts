@@ -435,20 +435,19 @@ export class EstablishmentService {
         const override = await this.availabilityOverrideModel.findByPk(overrideId);
         if (!override) { throw new AvailabilityOverrideNotFoundError(); }
 
-        const proposedStartDate = data.start_datetime ?? override.start_datetime;
-        const proposedEndDate = data.end_datetime ?? override.end_datetime;
+        const proposedData = { ...override.get({ plain: true }), ...data };
+        const proposedStartDate = new Date(proposedData.start_datetime);
+        const proposedEndDate = new Date(proposedData.end_datetime);
 
         if (data.start_datetime) {
             const now = new Date();
-            if (data.start_datetime.getTime() <= now.getTime()) {
+            if (proposedStartDate.getTime() <= now.getTime()) {
                 throw new AppError('InvalidInput', 400, 'Start date/time cannot be set in the past');
             }
         }
-
         if (proposedStartDate >= proposedEndDate) {
             throw new AppError('InvalidInput', 400, 'Start date/time must be before end date/time');
         }
-
         if (isAfter(proposedEndDate, addYears(proposedStartDate, MAX_OVERRIDE_DURATION_YEARS))) {
             throw new AppError('Validation Error', 400, `Availability override duration cannot exceed ${MAX_OVERRIDE_DURATION_YEARS} year(s)`);
         }

@@ -46,7 +46,7 @@
 
 **1. Introduction**
 
-Ce document détaille l'architecture, les composants, les concepts et les fonctionnalités du backend de l'application "Calendrier Événementiel" (ci-après dénommée APP_NAME). L'objectif principal de ce backend est de fournir une API RESTful sécurisée, robuste et scalable pour la gestion des comptes utilisateurs, l'authentification multi-facteurs, la gestion des établissements, des services proposés, des disponibilités et des réservations. **Cette version intègre une logique affinée pour la gestion des réservations (statut initial configurable, délai d'annulation par service, verrouillage des statuts finaux) et des validations plus robustes pour les exceptions de disponibilité.**
+Ce document détaille l'architecture, les composants, les concepts et les fonctionnalités du backend de l'application "Calendrier Événementiel" (ci-après dénommée APP_NAME). L'objectif principal de ce backend est de fournir une API RESTful sécurisée, robuste et scalable pour la gestion des comptes utilisateurs, l'authentification multi-facteurs, la gestion des établissements, des services proposés, des disponibilités et des réservations. Cette version intègre une logique affinée pour la gestion des réservations (statut initial configurable, délai d'annulation par service, verrouillage des statuts finaux), des validations robustes pour les exceptions de disponibilité, et des **fonctionnalités avancées de filtrage et de tri pour les listes de réservations**.
 
 **2. Architecture & Technologies**
 
@@ -198,12 +198,24 @@ Node.js, Express.js (v5), TypeScript, Sequelize (v6), MySQL (`mysql2`), Zod, JWT
     *   `DELETE /api/availability/overrides/:overrideId`: (Auth + `requireOverrideOwner` + CSRF) Réponse 204. Erreurs 403, 404.
 
 *   **Réservations (`/api/bookings` et routes imbriquées) (Mise à jour)**
-    *   `POST /api/bookings`: (Auth + CSRF) Body: `CreateBookingDto`. **Statut initial (`CONFIRMED` ou `PENDING_CONFIRMATION`) dépend de `Service.autoConfirmBookings`**. Réponse 201: `AdminBookingOutputDto`. Erreurs 404, 409 (conflit de slot), 400.
-    *   `GET /api/users/me/bookings`: (Auth) Query: `?page`, `?limit`. Réponse 200: `{ data: [Booking], pagination: {...} }`.
-    *   `GET /api/users/me/establishments/:establishmentId/bookings`: (Auth + Admin + Ownership) Query: `?page`, `?limit`. Réponse 200: `{ data: [AdminBookingOutputDto], pagination: {...} }`. Erreur 404.
-    *   `GET /api/bookings/:bookingId`: (Auth + `ensureBookingOwnerOrAdmin`) Réponse 200: `AdminBookingOutputDto`. Erreur 404.
-    *   `PATCH /api/bookings/:bookingId/cancel`: (Auth + CSRF) Annulation par client. **Vérifie `Service.cancellationDeadlineMinutes` et si statut actuel n'est pas final.** Réponse 200: `AdminBookingOutputDto`. Erreurs : `400 Bad Request` (statut final), `403 Forbidden` (délai dépassé ou non propriétaire), `404 Not Found`.
-    *   `PATCH /api/bookings/:bookingId`: (Auth + Admin + CSRF) Body: `UpdateBookingStatusDto` **(`status` optionnel)**. Mise à jour statut et/ou notes admin. **Valide transitions de statut autorisées et non-modification des statuts finaux (sauf NO_SHOW -> COMPLETED). Permet mise à jour `establishmentNotes` seule.** Réponse 200: `AdminBookingOutputDto`. Erreurs: `400 Bad Request` (statut final, transition invalide, payload vide), `403 Forbidden` (permission), `404 Not Found`.
+    *   `POST /api/bookings`: (Auth + CSRF) Body: `CreateBookingDto`. Statut initial (`CONFIRMED` ou `PENDING_CONFIRMATION`) dépend de `Service.autoConfirmBookings`. Réponse 201: `AdminBookingOutputDto`. Erreurs 404, 409 (conflit), 400.
+    *   `GET /api/users/me/bookings`: (Auth) Query: `?page`, `?limit`. Réponse 200: `{ data: [Booking], pagination: {...} }`. *(Note: Cet endpoint ne supporte PAS les filtres/tris avancés)*.
+    *   **`GET /api/users/me/establishments/:establishmentId/bookings`**: (Auth + Admin + Ownership) **Endpoint principal pour la liste admin avec filtres/tri**.
+        *   **Query Parameters (Optionnels sauf si pagination standard requise) :**
+            *   `page` (Number, défaut: 1) : Numéro de page.
+            *   `limit` (Number, défaut: 10, max: 100) : Nombre d'items par page.
+            *   `search` (String) : Recherche texte libre (insensible à la casse) sur `User.username`, `User.email`, `Service.name`, `Booking.establishment_notes`, `Booking.user_notes`.
+            *   `status` (String) : Liste de statuts (`BookingStatus`) séparés par virgule (ex: `CONFIRMED,COMPLETED`). Filtre si le statut est l'un de ceux fournis. Erreur 400 si statut invalide.
+            *   `serviceId` (Number) : Filtre par ID de service spécifique.
+            *   `startDate` (String `YYYY-MM-DD`) : Date de début (inclusive) de l'intervalle de `Booking.start_datetime`.
+            *   `endDate` (String `YYYY-MM-DD`) : Date de fin (inclusive) de l'intervalle de `Booking.start_datetime`. Erreur 400 si `endDate` < `startDate`.
+            *   `sortBy` (String, défaut: `'start_datetime'`) : Champ de tri. Valeurs possibles: `'start_datetime'`, `'created_at'`, `'status'`, `'service_name'`, `'client_name'`. Utilise le défaut ou renvoie 400 si invalide.
+            *   `sortOrder` (String, défaut: `'desc'`) : Ordre (`'asc'` ou `'desc'`). Utilise le défaut si invalide.
+        *   **Réponse (200 OK) :** Objet `{ data: [AdminBookingOutputDto], pagination: {...} }`. `data` contient les réservations filtrées et triées.
+        *   **Erreurs Possibles :** `400 Bad Request` (paramètre invalide: format date, statut inconnu, sortBy inconnu, etc.), `401 Unauthorized`, `403 Forbidden` (pas Admin), `404 Not Found` (établissement inexistant ou non possédé).
+    *   `GET /api/bookings/:bookingId`: (Auth + `ensureBookingOwnerOrAdmin`) Réponse 200: `AdminBookingOutputDto`. Erreur 404. *(Pas de filtres/tri ici)*.
+    *   `PATCH /api/bookings/:bookingId/cancel`: (Auth + CSRF) Annulation par client. Vérifie statut non final et délai (`Service.cancellationDeadlineMinutes`). Réponse 200: `AdminBookingOutputDto`. Erreurs : `400` (statut final), `403` (délai dépassé/permission), `404`.
+    *   `PATCH /api/bookings/:bookingId`: (Auth + Admin + CSRF) Body: `UpdateBookingStatusDto` (`status` optionnel). Mise à jour statut et/ou `establishmentNotes`. Valide transitions et statuts finaux. Réponse 200: `AdminBookingOutputDto`. Erreurs: `400` (logique statut/payload vide), `403`, `404`.
 
 **6. Configuration Essentielle (`.env`)**
 
