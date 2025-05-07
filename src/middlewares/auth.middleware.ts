@@ -9,8 +9,11 @@ import { AppError } from '../errors/app.errors';
 import { BookingNotFoundError } from '../errors/booking.errors';
 import { EstablishmentNotFoundError } from '../errors/establishment.errors';
 import { AuthenticationError, AuthorizationError } from '../errors/auth.errors';
+import { MembershipNotFoundError } from '../errors/membership.errors';
 import { ServiceNotFoundError, ServiceOwnershipError } from '../errors/service.errors';
 import { AvailabilityRuleNotFoundError, AvailabilityOverrideNotFoundError, AvailabilityOwnershipError } from '../errors/availability.errors';
+
+import Membership, { MembershipAttributes, MembershipRole, MembershipStatus } from '../models/Membership';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'YOUR_SUPER_SECRET_KEY';
 const SUPER_ADMIN = process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN';
@@ -189,6 +192,178 @@ export const ensureOwnsEstablishment = async (req: Request, res: Response, next:
         next(error);
     }
 };
+
+export const ensureMembership = (requiredRoles?: MembershipRole[]) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+        if (!req.user) { return next(new AuthenticationError('Authentication required.')); }
+
+        const establishmentIdStr = req.params.establishmentId;
+        if (!establishmentIdStr) { return next(new AppError('MissingParameter', 400, 'Establishment ID parameter is missing in the route.')); }
+
+        const establishmentId = parseInt(establishmentIdStr, 10);
+        if (isNaN(establishmentId)) { return next(new AppError('InvalidParameter', 400, 'Invalid establishment ID parameter.')); }
+
+        try {
+            const membership = await db.Membership.findOne({
+                where: {
+                    userId: req.user.id,
+                    establishmentId: establishmentId,
+                    status: MembershipStatus.ACTIVE
+                },
+            });
+
+            if (!membership) {
+                if (req.user.roles.includes(SUPER_ADMIN)) {
+                    const establishmentExists = await db.Establishment.findByPk(establishmentId, { attributes: ['id'] });
+                    if (!establishmentExists) return next(new EstablishmentNotFoundError());
+                    console.log(`User ${req.user.id} is SUPER_ADMIN, granting access to establishment ${establishmentId} despite no active membership.`);
+                    return next();
+                }
+
+                return next(new AuthorizationError('Forbidden: You are not an active member of this establishment.'));
+            }
+
+            if (requiredRoles && requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
+                if (req.user.roles.includes(SUPER_ADMIN)) {
+                    console.log(`User ${req.user.id} is SUPER_ADMIN, bypassing role check (${requiredRoles.join('/')}) for establishment ${establishmentId}.`);
+                } else {
+                    console.warn(`Authorization failed for user ${req.user.id} in establishment ${establishmentId}. Required role(s): ${requiredRoles.join('/')}. User role: ${membership.role}`);
+                    return next(new AuthorizationError(`Forbidden: Role '${requiredRoles.join(' or ')}' required for this action.`));
+                }
+            }
+
+            req.membership = membership.get({ plain: true });
+            next();
+
+        } catch (error) {
+            console.error(`Error in ensureMembership middleware for user ${req.user.id}, establishment ${establishmentId}:`, error);
+            next(error);
+        }
+    };
+};
+
+// Middleware pour vérifier si l'utilisateur est ADMIN de l'établissement OU le propriétaire du membership cible
+// Utilisé pour GET /establishments/:establishmentId/memberships/:membershipId
+export const ensureAdminOrSelfForMembership = async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) { return next(new AuthenticationError('Authentication required.')); }
+
+    // req.membership est attaché par le ensureMembership([ADMIN, STAFF]) qui s'exécute avant pour ce routeur
+    const actorMembershipFromPreviousMiddleware = req.membership;
+
+    const establishmentIdStr = req.params.establishmentId;
+    const membershipIdStr = req.params.membershipId;
+    if (!establishmentIdStr || !membershipIdStr) { return next(new AppError('MissingParameter', 400, 'Establishment ID or Membership ID parameter is missing.')); }
+
+    const establishmentId = parseInt(establishmentIdStr, 10);
+    const targetMembershipId = parseInt(membershipIdStr, 10);
+    if (isNaN(establishmentId) || isNaN(targetMembershipId)) { return next(new AppError('InvalidParameter', 400, 'Invalid establishment or membership ID.')); }
+
+    try {
+        // 1. Vérifier que l'acteur est bien membre de l'établissement spécifié dans l'URL.
+        if (actorMembershipFromPreviousMiddleware && actorMembershipFromPreviousMiddleware.establishmentId !== establishmentId) {
+            console.warn(`[ensureAdminOrSelf] Mismatch: Actor's active membership establishment (${actorMembershipFromPreviousMiddleware.establishmentId}) does not match URL establishment (${establishmentId}).`);
+            return next(new AuthorizationError('Forbidden: Resource access mismatch.'));
+        }
+
+        // 2. Trouver le membership cible
+        const targetMembership = await db.Membership.findOne({
+            where: { id: targetMembershipId, establishmentId: establishmentId },
+            attributes: ['id', 'userId', 'establishmentId', 'role', 'status']
+        });
+        if (!targetMembership) { return next(new MembershipNotFoundError(`Membership ID ${targetMembershipId} not found in establishment ${establishmentId}.`)); }
+
+        // 3. Gérer SUPER_ADMIN (si req.user.roles est disponible et fiable)
+        if (req.user.roles.includes(SUPER_ADMIN)) {
+            console.log(`User ${req.user.id} is SUPER_ADMIN, granting access to membership ${targetMembershipId}.`);
+            req.membership = actorMembershipFromPreviousMiddleware;
+            return next();
+        }
+
+        // 4. S'assurer que l'acteur a un membership (ce qui devrait être garanti par le ensureMembership précédent)
+        if (!actorMembershipFromPreviousMiddleware) {
+            console.error("[ensureAdminOrSelf] Critical: actorMembershipFromPreviousMiddleware is undefined, but should have been set by prior ensureMembership.");
+            return next(new AuthorizationError('Forbidden: You are not an active member of this establishment.'));
+        }
+
+        // 5. Vérifier la permission : Admin OU Soi-même
+        const isAdmin = actorMembershipFromPreviousMiddleware.role === MembershipRole.ADMIN;
+        // La condition 'isSelf' compare l'ID de l'utilisateur de l'acteur avec l'ID de l'utilisateur du membership cible
+        const isSelf = actorMembershipFromPreviousMiddleware.userId === targetMembership.userId;
+
+        if (isAdmin || isSelf) {
+            // req.membership est déjà celui de l'acteur, pas besoin de le réassigner si c'est le même objet.
+            next();
+        } else {
+            console.warn(`[ensureAdminOrSelf] AuthZ failed: Actor UserID ${actorMembershipFromPreviousMiddleware.userId} (Role: ${actorMembershipFromPreviousMiddleware.role}) trying to access Target Membership ID ${targetMembership.id} (owned by UserID ${targetMembership.userId})`);
+            return next(new AuthorizationError('Forbidden: You can only view your own membership details or you must be an admin of this establishment.'));
+        }
+
+    } catch (error) {
+        console.error(`Error in ensureAdminOrSelfForMembership middleware for user ${req.user.id}, membership ${targetMembershipId}:`, error);
+        next(error);
+    }
+};
+// Middleware pour vérifier si l'utilisateur est ADMIN de l'établissement auquel APPARTIENT le membership cible
+// Utilisé pour PATCH /memberships/:membershipId et DELETE /memberships/:membershipId
+export const ensureAdminOfTargetMembership = async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) { return next(new AuthenticationError('Authentication required.')); }
+
+    const membershipIdStr = req.params.membershipId; // La route doit avoir :membershipId
+    if (!membershipIdStr) { return next(new AppError('MissingParameter', 400, 'Membership ID parameter is missing.')); }
+
+    const membershipId = parseInt(membershipIdStr, 10);
+    if (isNaN(membershipId)) { return next(new AppError('InvalidParameter', 400, 'Invalid membership ID.')); }
+
+    try {
+        // 1. Trouver le membership cible pour obtenir son establishmentId
+        const targetMembership = await db.Membership.findByPk(membershipId, {
+            attributes: ['id', 'establishmentId', 'userId', 'role'] // Récupérer les infos nécessaires
+        });
+        if (!targetMembership) { return next(new MembershipNotFoundError()); } // 404 si la cible n'existe pas du tout
+
+        const targetEstablishmentId = targetMembership.establishmentId;
+
+        // 2. Trouver le membership de l'acteur pour cet establishment cible
+        const actorMembership = await db.Membership.findOne({
+            where: { userId: req.user.id, establishmentId: targetEstablishmentId, status: MembershipStatus.ACTIVE }
+        });
+
+        // 3. Gérer SUPER_ADMIN
+        if (req.user.roles.includes(SUPER_ADMIN)) {
+            console.log(`User ${req.user.id} is SUPER_ADMIN, granting access to modify membership ${membershipId}.`);
+            // Attacher le membership de l'acteur s'il existe
+            req.membership = actorMembership?.get({ plain: true });
+            // Attacher aussi la cible peut être utile au contrôleur/service
+            (req as any).targetMembership = targetMembership.get({ plain: true }); // Utiliser un type plus propre si possible
+            return next();
+        }
+
+        // 4. Vérifier si l'acteur est membre actif ET admin de l'établissement cible
+        if (!actorMembership || actorMembership.role !== MembershipRole.ADMIN) {
+            console.warn(`Authorization failed: User ${req.user.id} (Role: ${actorMembership?.role}) trying to modify membership ${membershipId} in establishment ${targetEstablishmentId}. Requires ADMIN.`);
+            return next(new AuthorizationError('Forbidden: You must be an administrator of this establishment to perform this action.'));
+        }
+
+        // 5. Attacher les infos
+        req.membership = actorMembership.get({ plain: true });
+        (req as any).targetMembership = targetMembership.get({ plain: true });
+        next();
+
+    } catch (error) {
+        console.error(`Error in ensureAdminOfTargetMembership middleware for user ${req.user.id}, target membership ${membershipId}:`, error);
+        next(error);
+    }
+};
+
+// Ajouter targetMembership à l'interface Request si on l'attache
+declare global {
+    namespace Express {
+        interface Request {
+            // ... (user, membership existants) ...
+            targetMembership?: MembershipAttributes; // <-- AJOUTER
+        }
+    }
+}
 
 export const requireServiceOwner = async (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) { return next(new AuthenticationError('Authentication required.')); }

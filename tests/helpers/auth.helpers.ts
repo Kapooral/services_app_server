@@ -92,3 +92,4 @@ interface AccessTokenPayload {
     iat?: number;
     exp?: number;
 }
+export interface TestUserCredentials { email: string; password?: string; }

@@ -20,6 +20,8 @@ export interface INotificationService {
     sendWelcomeEmail(to: string): Promise<void>;
     sendActivationEmail(to: string, activationToken: string): Promise<void>;
     sendAccountDeletionConfirmation(to: string): Promise<void>;
+    sendInvitationEmail(toEmail: string, token: string, establishmentName: string, inviterName: string): Promise<void>;
+    sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void>;
 
     // --- Méthodes pour les réservations ---
     sendBookingConfirmationClient(
@@ -325,6 +327,40 @@ export class ConsoleNotificationService implements INotificationService {
         `;
         await this.send({ to: clientEmail, subject, html });
     }
+
+
+    async sendInvitationEmail(to: string, token: string, establishmentName: string, inviterName: string): Promise<void> {
+        const subject = `You're invited to join ${establishmentName} on ${APP_NAME}`;
+        const acceptLink = `${FRONTEND_URL}/accept-invitation/${token}`;
+        const html = `
+            <h1>Invitation</h1>
+            <p>Hello,</p>
+            <p><strong>${inviterName}</strong> has invited you to join the establishment "<strong>${establishmentName}</strong>" as a Staff member on ${APP_NAME}.</p>
+            <p>Click the link below to accept the invitation and set up your account:</p>
+            <p><a href="${acceptLink}" style="display: inline-block; padding: 10px 20px; background-color: #0d6efd; color: white; text-decoration: none; border-radius: 5px;">Accept Invitation</a></p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>${acceptLink}</p>
+            <p>This invitation link is valid for 7 days.</p>
+            <p>If you were not expecting this invitation, please ignore this email.</p>
+            <br/>
+            <p>Thanks,</p>
+            <p>The ${APP_NAME} Team</p>
+        `;
+        await this.send({ to, subject, html });
+    }
+
+    async sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void> {
+        const subject = `New Member Joined: ${newMemberUsername} joined ${establishmentName}`;
+        const html = `
+            <h1>Member Joined</h1>
+            <p>Hello Admin,</p>
+            <p><strong>${newMemberUsername}</strong> has accepted the invitation and joined your establishment "<strong>${establishmentName}</strong>" as a Staff member.</p>
+            <p>You can manage members in your establishment settings.</p>
+            <br/>
+            <p>The ${APP_NAME} Team</p>
+         `;
+        await this.send({ to: adminEmail, subject, html });
+    }
 }
 
 export class NullNotificationService implements INotificationService {
@@ -339,4 +375,6 @@ export class NullNotificationService implements INotificationService {
     async sendBookingNotificationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes ): Promise<void> { /* no-op */ }
     async sendBookingCancellationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes ): Promise<void> { /* no-op */ }
     async sendBookingStatusUpdateClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes): Promise<void> { /* no-op */ }
+    async sendInvitationEmail(toEmail: string, token: string, establishmentName: string, inviterName: string): Promise<void> { /* no-op */ }
+    async sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void> { /* no-op */ }
 }

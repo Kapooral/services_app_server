@@ -11,6 +11,10 @@ import { BookingService } from '../services/booking.service';
 import { ensureOwnsEstablishment, requireRole } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 import { fileService } from '../services/file.service';
+import { MembershipService } from '../services/membership.service';
+import { ensureMembership, ensureAdminOrSelfForMembership } from '../middlewares/auth.middleware';
+
+import { MembershipRole } from '../models'
 
 const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
 const establishmentPictureUpload = multer(fileService.multerOptions).single('profilePicture');
@@ -19,41 +23,46 @@ export const createMyEstablishmentRouter = (
     establishmentService: EstablishmentService,
     serviceService: ServiceService,
     availabilityService: AvailabilityService,
-    bookingService: BookingService
+    bookingService: BookingService,
+    membershipService: MembershipService
 ): Router => {
     const router = Router({ mergeParams: true }); // Important: mergeParams pour récupérer :establishmentId
 
-    const establishmentController = new EstablishmentController(establishmentService);
+    const establishmentController = new EstablishmentController(establishmentService, membershipService);
     const serviceController = new ServiceController(serviceService, availabilityService);
     const bookingController = new BookingController(bookingService);
 
     // Appliquer le middleware d'ownership à toutes les routes de ce routeur
-    router.use(ensureOwnsEstablishment);
+    router.use(ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]));
 
     // --- Routes pour l'établissement spécifique ---
-    router.get('/', establishmentController.getMyEstablishmentById);
-    router.put('/', verifyCsrfToken, establishmentController.updateMyEstablishment);
-    router.post('/request-validation', verifyCsrfToken, establishmentController.requestMyValidation);
-    router.patch('/profile-picture', verifyCsrfToken, establishmentPictureUpload, establishmentController.updateMyProfilePicture);
-    router.delete('/profile-picture', verifyCsrfToken, establishmentController.deleteMyProfilePicture);
+    router.get('/', ensureOwnsEstablishment, establishmentController.getMyEstablishmentById);
+    router.put('/', ensureOwnsEstablishment, verifyCsrfToken, establishmentController.updateMyEstablishment);
+    router.post('/request-validation', ensureOwnsEstablishment, verifyCsrfToken, establishmentController.requestMyValidation);
+    router.patch('/profile-picture', ensureOwnsEstablishment, verifyCsrfToken, establishmentPictureUpload, establishmentController.updateMyProfilePicture);
+    router.delete('/profile-picture', ensureOwnsEstablishment, verifyCsrfToken, establishmentController.deleteMyProfilePicture);
 
     // --- Routes pour les sous-ressources ---
     // Services
-    router.post('/services', verifyCsrfToken, serviceController.createForMyEstablishment);
-    router.get('/services', serviceController.getOwnedForMyEstablishment);
-    // *** NOUVELLE ROUTE ***
-    router.get('/services/:serviceId', serviceController.getOwnedServiceById); // Pas besoin de middleware ici car hérités
+    router.post('/services', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, serviceController.createForMyEstablishment);
+    router.get('/services', ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), serviceController.getOwnedForMyEstablishment);
+    router.get('/services/:serviceId', ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), serviceController.getOwnedServiceById);
 
     // Disponibilité - Règles
-    router.post('/availability/rules', verifyCsrfToken, establishmentController.createMyRule);
-    router.get('/availability/rules', establishmentController.getMyRules);
+    router.post('/availability/rules', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, establishmentController.createMyRule);
+    router.get('/availability/rules', ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), establishmentController.getMyRules);
 
     // Disponibilité - Overrides
-    router.post('/availability/overrides', verifyCsrfToken, establishmentController.createMyOverride);
-    router.get('/availability/overrides', establishmentController.getMyOverrides);
+    router.post('/availability/overrides', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, establishmentController.createMyOverride);
+    router.get('/availability/overrides', ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), establishmentController.getMyOverrides);
 
     // Bookings
-    router.get('/bookings', bookingController.getEstablishmentBookings);
+    router.get('/bookings', ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), bookingController.getEstablishmentBookings);
+
+    router.get('/memberships', ensureMembership([MembershipRole.ADMIN]), establishmentController.getMemberships);
+    router.get('/memberships/:membershipId', ensureAdminOrSelfForMembership, establishmentController.getMembershipById);
+    router.post('/memberships/invite', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, establishmentController.inviteMember);
+
 
     return router;
 };

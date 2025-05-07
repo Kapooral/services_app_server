@@ -21,6 +21,7 @@ import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 // Importer les créateurs de sous-routeurs pour /me/establishments/...
 import { createMyEstablishmentsRootRouter } from './my-establishments-root.routes';
 import { createMyEstablishmentRouter } from './my-establishment.routes';
+import {MembershipService} from "../services/membership.service";
 
 // Options Multer pour la photo de profil utilisateur
 const profilePictureUpload = multer(fileService.multerOptions).single('profilePicture');
@@ -32,7 +33,8 @@ export const createUserRouter = (
     bookingService: BookingService,
     establishmentService: EstablishmentService,
     serviceService: ServiceService,
-    availabilityService: AvailabilityService
+    availabilityService: AvailabilityService,
+    membershipService: MembershipService
 ): Router => {
     const router = Router();
     const userController = new UserController(userService);
@@ -50,11 +52,11 @@ export const createUserRouter = (
     router.get('/me/bookings', requireAuth, bookingController.getUserBookings); // Récupérer ses propres réservations
 
     // Montage du routeur pour /me/establishments (liste)
-    const myEstablishmentsRootRouter = createMyEstablishmentsRootRouter(establishmentService, availabilityService);
-    router.use('/me/establishments', requireAuth, requireRole(ESTABLISHMENT_ADMIN_ROLE_NAME), myEstablishmentsRootRouter);
+    const myEstablishmentsRootRouter = createMyEstablishmentsRootRouter(establishmentService, availabilityService, membershipService);
+    router.use('/me/establishments', requireAuth, myEstablishmentsRootRouter);
 
     // Montage du routeur pour /me/establishments/:establishmentId (détail et actions)
-    const myEstablishmentRouter = createMyEstablishmentRouter(establishmentService, serviceService, availabilityService, bookingService);
+    const myEstablishmentRouter = createMyEstablishmentRouter(establishmentService, serviceService, availabilityService, bookingService, membershipService);
     // Note: Le middleware requireAuth et requireRole(ESTABLISHMENT_ADMIN_ROLE_NAME) est déjà appliqué par le montage précédent
     // Le middleware ensureOwnsEstablishment est appliqué DANS myEstablishmentRouter
     router.use('/me/establishments/:establishmentId', myEstablishmentRouter);

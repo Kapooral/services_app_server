@@ -4,7 +4,9 @@ import User from './User';
 export enum ROLES {
     CLIENT = 'CLIENT',
     ESTABLISHMENT_ADMIN = 'ESTABLISHMENT_ADMIN',
-    SUPER_ADMIN = 'SUPER_ADMIN'
+    SUPER_ADMIN = 'SUPER_ADMIN',
+    STAFF = 'STAFF',
+    ADMIN = 'ADMIN'
 }
 
 interface RoleAttributes {

@@ -2,7 +2,7 @@
 import { Includeable, ModelCtor, Op } from 'sequelize';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
-import User, { UserAttributes } from '../models/User';
+import User, {UserAttributes, UserCreationAttributes} from '../models/User';
 import { fileService } from './file.service';
 import { INotificationService } from './notification.service';
 import { CreateUserDto, UpdateEmailDto, UpdateUserDto } from '../dtos/user.validation';
@@ -19,6 +19,12 @@ import {
 import { AppError } from '../errors/app.errors';
 import { AuthService } from './auth.service';
 import db from '../models/index';
+import {RegisterViaInvitationDto} from "../dtos/membership.validation";
+import {Request} from "express";
+import {AuthTokensDto} from "../dtos/auth.validation";
+import {MembershipAttributes} from "../models/Membership";
+import {MembershipService} from "./membership.service";
+
 
 const SALT_ROUNDS = 10;
 const CODE_EXPIRATION_MINUTES = 15;
@@ -33,6 +39,7 @@ export class UserService {
     private userModel: ModelCtor<User>;
     private notificationService: INotificationService;
     private authService?: AuthService;
+    private membershipService: MembershipService | undefined;
 
     constructor(
         userModel: ModelCtor<User>,
@@ -44,6 +51,9 @@ export class UserService {
 
     public setAuthService(authService: AuthService) {
         this.authService = authService;
+    }
+    public setMembershipService(membershipService: MembershipService) {
+        this.membershipService = membershipService;
     }
 
     private _hashToken(token: string): string {
@@ -94,7 +104,6 @@ export class UserService {
         const activationExpiresAt = new Date(Date.now() + ACTIVATION_TOKEN_EXPIRATION_HOURS * 60 * 60 * 1000);
 
         try {
-            // Création sans le champ 'salt'
             const newUser = await this.userModel.create({
                 ...userData,
                 phone: userData.phone ?? undefined,
@@ -108,7 +117,6 @@ export class UserService {
                 email_activation_token_expires_at: activationExpiresAt,
                 is_two_factor_enabled: false // Default
             } as Omit<UserAttributes, 'salt' | 'id'>); // Adapter le type ici aussi si UserAttributes a encore 'salt'
-
             try {
                 await this.notificationService.sendActivationEmail(newUser.email, plainActivationToken);
             } catch (emailError) {
@@ -125,7 +133,6 @@ export class UserService {
                 console.warn("AuthService not set in UserService, cannot generate initial recovery codes.");
             }
 
-            // Retourner l'utilisateur potentiellement avec les associations (si getById les charge)
             return await this.getUserById(newUser.id, {}) ?? newUser;
 
         } catch (error: any) {

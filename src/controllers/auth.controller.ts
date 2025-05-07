@@ -8,9 +8,13 @@ import {
 } from '../errors/auth.errors';
 import { ZodError } from 'zod';
 import { AppError } from '../errors/app.errors';
-import { UserNotFoundError } from '../errors/user.errors';
+import { UserNotFoundError, DuplicateEmailError, DuplicateUsernameError } from '../errors/user.errors';
 import { UserService } from '../services/user.service';
+import { MembershipService } from '../services/membership.service';
+import { RegisterViaInvitationSchema, RegisterViaInvitationDto } from '../dtos/membership.validation';
 import { setCsrfCookies, clearCsrfCookies } from '../middlewares/csrf.middleware';
+
+import { InvitationTokenInvalidError } from '../errors/membership.errors';
 
 const PRE_2FA_TOKEN_HEADER = 'X-Pre-2FA-Token';
 
@@ -50,6 +54,7 @@ export class AuthController {
         this.requestTotpSetup = this.requestTotpSetup.bind(this);
         this.enableTotp = this.enableTotp.bind(this);
         this.disableTotp = this.disableTotp.bind(this);
+        this.registerViaInvitation = this.registerViaInvitation.bind(this);
     }
 
     async initiateLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -210,6 +215,32 @@ export class AuthController {
             if (error instanceof ZodError) { res.status(400).json({ message: "Validation failed", errors: error.errors.map(e => ({ path: e.path.join('.'), message: e.message }))}); }
             else if (error instanceof InvalidCredentialsError) { res.status(401).json({ message: error.message }); }
             else { next(error); }
+        }
+    }
+
+    async registerViaInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const registerDto: RegisterViaInvitationDto = RegisterViaInvitationSchema.parse(req.body);
+            const { tokens, membership } = await this.authService.registerViaInvitation(registerDto, req);
+
+            res.cookie('refreshToken', tokens.refreshToken, refreshTokenCookieOptions);
+            setCsrfCookies(res); // Définit les cookies CSRF pour la nouvelle session
+
+            res.status(201).json({
+                message: "Account created and invitation accepted successfully.",
+                accessToken: tokens.accessToken,
+                membership
+            });
+        } catch (error) {
+            if (error instanceof z.ZodError) {
+                res.status(400).json({ statusCode: 400, error: 'Validation Error', message: "Invalid input.", details: error.errors });
+            } else if (error instanceof InvitationTokenInvalidError) {
+                res.status(400).json({ statusCode: 400, error: 'Bad Request', message: error.message });
+            } else if (error instanceof DuplicateEmailError || error instanceof DuplicateUsernameError) {
+                res.status(409).json({ statusCode: 409, error: 'Conflict', message: error.message });
+            } else {
+                next(error);
+            }
         }
     }
 }

@@ -13,6 +13,10 @@ import AvailabilityOverride, { initAvailabilityOverride } from './AvailabilityOv
 import Booking, { initBooking } from './Booking';
 import Country, { initCountry } from './Country';
 
+import Membership, { initMembership, MembershipRole, MembershipStatus } from './Membership';
+import StaffAvailability, { initStaffAvailability } from './StaffAvailability';
+import ServiceMemberAssignment, { initServiceMemberAssignment } from './ServiceMemberAssignment';
+
 const UserModel = initUser(sequelizeInstance);
 const RefreshTokenModel = initRefreshToken(sequelizeInstance);
 const RoleModel = initRole(sequelizeInstance);
@@ -26,6 +30,10 @@ const BookingModel = initBooking(sequelizeInstance);
 
 const CountryModel = initCountry(sequelizeInstance);
 
+const MembershipModel = initMembership(sequelizeInstance);
+const StaffAvailabilityModel = initStaffAvailability(sequelizeInstance);
+const ServiceMemberAssignmentModel = initServiceMemberAssignment(sequelizeInstance);
+
 const db = {
     sequelize: sequelizeInstance,
     Sequelize,
@@ -38,7 +46,10 @@ const db = {
     AvailabilityRule: AvailabilityRuleModel,
     AvailabilityOverride: AvailabilityOverrideModel,
     Booking: BookingModel,
-    Country: CountryModel
+    Country: CountryModel,
+    Membership: MembershipModel,
+    StaffAvailability: StaffAvailabilityModel,
+    ServiceMemberAssignment: ServiceMemberAssignmentModel,
 };
 
 
@@ -80,5 +91,36 @@ BookingModel.belongsTo(EstablishmentModel, { foreignKey: 'establishment_id', as:
 ServiceModel.hasMany(BookingModel, { foreignKey: 'service_id', as: 'bookings' });
 BookingModel.belongsTo(ServiceModel, { foreignKey: 'service_id', as: 'service' });
 
+// User <-> Membership (1:N)
+UserModel.hasMany(MembershipModel, { foreignKey: 'userId', as: 'memberships' });
+MembershipModel.belongsTo(UserModel, { foreignKey: 'userId', as: 'user' });
+
+// Establishment <-> Membership (1:N)
+EstablishmentModel.hasMany(MembershipModel, { foreignKey: 'establishmentId', as: 'memberships' });
+MembershipModel.belongsTo(EstablishmentModel, { foreignKey: 'establishmentId', as: 'establishment' });
+
+// Membership <-> StaffAvailability (1:N)
+MembershipModel.hasMany(StaffAvailabilityModel, { foreignKey: 'membershipId', as: 'staffAvailabilities' });
+StaffAvailabilityModel.belongsTo(MembershipModel, { foreignKey: 'membershipId', as: 'membership' });
+
+// Service <-> Membership (N:M via ServiceMemberAssignment)
+ServiceModel.belongsToMany(MembershipModel, {
+    through: ServiceMemberAssignmentModel,
+    foreignKey: 'serviceId',
+    otherKey: 'membershipId',
+    as: 'assignedMembers' // Alias pour accéder aux memberships depuis un service
+});
+MembershipModel.belongsToMany(ServiceModel, {
+    through: ServiceMemberAssignmentModel,
+    foreignKey: 'membershipId',
+    otherKey: 'serviceId',
+    as: 'assignedServices' // Alias pour accéder aux services depuis un membership
+});
+
+// Membership <-> Booking (1:N pour le membre assigné)
+MembershipModel.hasMany(BookingModel, { foreignKey: 'assignedMembershipId', as: 'assignedBookings' });
+BookingModel.belongsTo(MembershipModel, { foreignKey: 'assignedMembershipId', as: 'assignedMember' });
+
 
 export default db;
+export { MembershipRole, MembershipStatus };

@@ -15,6 +15,7 @@ import { BookingService } from './services/booking.service';
 import { ServiceService } from './services/service.service';
 import { EstablishmentService } from './services/establishment.service';
 import { AvailabilityService } from './services/availability.service';
+import { MembershipService } from './services/membership.service';
 import { encryptionService } from './services/encryption.service'; // Implicitement utilisé par AuthService
 
 // Import des fonctions créant les routeurs
@@ -24,6 +25,7 @@ import { createEstablishmentRouter } from './routes/establishment.routes';
 import { createServiceRouter, ServiceRouters } from './routes/service.routes'; // L'interface ServiceRouters est déjà importée
 import { createAvailabilityRouter } from './routes/availability.routes';
 import { createBookingRouter } from './routes/booking.routes';
+import membershipRouter from './routes/member.routes';
 // createMyEstablishmentsRootRouter et createMyEstablishmentRouter sont utilisés DANS user.routes.ts, pas ici directement.
 
 import errorMiddleware from './middlewares/error.middleware';
@@ -46,7 +48,8 @@ if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
 // Instanciation des services avec injection des dépendances
 const notificationService: INotificationService = new ConsoleNotificationService();
 const userService = new UserService(db.User, notificationService);
-const authService = new AuthService(userService, notificationService, db.User, db.RefreshToken, encryptionService); // Injecter encryptionService
+const membershipService = new MembershipService(db.Membership, db.User, db.Establishment, notificationService);
+const authService = new AuthService(userService, notificationService, db.User, db.RefreshToken, encryptionService, membershipService); // Injecter encryptionService
 // Injecter les modèles nécessaires dans EstablishmentService
 const establishmentService = new EstablishmentService(db.Establishment, db.User, db.Role, db.AvailabilityRule, db.AvailabilityOverride, db.Country); // Ajout db.Country
 const availabilityService = new AvailabilityService();
@@ -102,12 +105,13 @@ const userRouter = createUserRouter(
     bookingService,
     establishmentService,
     serviceService,
-    availabilityService
+    availabilityService,
+    membershipService
 );
 const authRouter = createAuthRouter(authService, userService);
-const establishmentRouter = createEstablishmentRouter(establishmentService, serviceService, availabilityService); // Celui-ci gère /api/establishments (public)
+const establishmentRouter = createEstablishmentRouter(establishmentService, serviceService, availabilityService, membershipService); // Celui-ci gère /api/establishments (public)
 const { servicesRootRouter } = createServiceRouter(serviceService, availabilityService); // Récupère le routeur pour /api/services/:id
-const availabilityRouter = createAvailabilityRouter(establishmentService); // Gère /api/availability/...
+const availabilityRouter = createAvailabilityRouter(establishmentService, membershipService); // Gère /api/availability/...
 const bookingRouter = createBookingRouter(bookingService); // Gère /api/bookings/...
 
 // Montage des routes principales
@@ -117,6 +121,7 @@ app.use('/api/services', servicesRootRouter); // Monte /api/services/:serviceId/
 app.use('/api/availability', availabilityRouter); // Monte /api/availability/rules/:ruleId, /api/availability/overrides/:overrideId
 app.use('/api/establishments', establishmentRouter); // Monte /api/establishments (public list/detail) ET /api/establishments/:id/services (public)
 app.use('/api/bookings', bookingRouter);
+app.use('/api/memberships', membershipRouter); // Monte /api/memberships/invitation-details/:token et /api/memberships/activate-after-login
 
 // Middleware de Gestion des Erreurs (doit être le dernier)
 app.use(errorMiddleware);

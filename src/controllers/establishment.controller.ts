@@ -15,16 +15,23 @@ import {
     UpdateAvailabilityRuleDto, UpdateAvailabilityRuleSchema
 } from '../dtos/availability.validation';
 
-import { AuthenticationError } from '../errors/auth.errors';
-import { EstablishmentNotFoundError, EstablishmentProfilePictureNotFoundError } from '../errors/establishment.errors';
+import { AuthenticationError, AuthorizationError } from '../errors/auth.errors';
+import { UserAlreadyMemberError, MembershipNotFoundError } from '../errors/membership.errors';
+import { EstablishmentNotFoundError } from '../errors/establishment.errors';
 import { AppError } from '../errors/app.errors';
 import { ZodError } from 'zod';
 
+import { MembershipService } from '../services/membership.service';
+import { InviteMemberSchema, InviteMemberDto, MembershipDto, mapToMembershipDto  } from '../dtos/membership.validation';
+import { MembershipAttributes } from '../models/Membership';
+
 export class EstablishmentController {
     private establishmentService: EstablishmentService;
+    private membershipService: MembershipService | undefined;
 
-    constructor(establishmentService: EstablishmentService) {
+    constructor(establishmentService: EstablishmentService, membershipService: MembershipService) {
         this.establishmentService = establishmentService;
+        this.membershipService = membershipService
         // Bind methods
         this.create = this.create.bind(this);
         this.findPublic = this.findPublic.bind(this);
@@ -46,6 +53,9 @@ export class EstablishmentController {
         this.deleteRule = this.deleteRule.bind(this);
         this.updateOverride = this.updateOverride.bind(this);
         this.deleteOverride = this.deleteOverride.bind(this);
+        this.inviteMember = this.inviteMember.bind(this);
+        this.getMemberships = this.getMemberships.bind(this);
+        this.getMembershipById = this.getMembershipById.bind(this);
     }
 
     // POST /establishments
@@ -61,7 +71,7 @@ export class EstablishmentController {
 
             res.status(201).json(outputDto);
         } catch (error) {
-            next(error); // Passe à errorMiddleware (gère ZodError, AppError, etc.)
+            next(error);
         }
     }
 
@@ -207,6 +217,46 @@ export class EstablishmentController {
         }
     }
 
+    // POST /users/me/establishments/:establishmentId/memberships/invite
+    async inviteMember(req: Request, res: Response, next: NextFunction): Promise<void> {
+        if (!this.membershipService) {
+            return next(new AppError('ServiceNotAvailable', 500, 'Membership service is not configured for this controller.'));
+        }
+        try {
+            const inviterMembership = req.membership;
+            if (!inviterMembership || typeof inviterMembership.id !== 'number') {
+                throw new AppError('MiddlewareError', 500, 'Inviter membership data not found in request.');
+            }
+
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            const inviteDto: InviteMemberDto = InviteMemberSchema.parse(req.body);
+
+            const newMembership = await this.membershipService.inviteMember(
+                inviterMembership as MembershipAttributes,
+                establishmentId,
+                inviteDto
+            );
+
+            res.status(201).json({
+                message: `Invitation sent successfully to ${inviteDto.email}.`,
+                membership: newMembership.get({ plain: true }) // Renvoyer le membership PENDING créé
+            });
+        } catch (error) {
+            if (error instanceof ZodError) {
+                res.status(400).json({ statusCode: 400, error: 'Validation Error', message: "Invalid input.", details: error.errors });
+            }
+            else if (error instanceof UserAlreadyMemberError) {
+                res.status(409).json({ statusCode: 409, error: 'Conflict', message: error.message });
+            }
+            else if (error instanceof AppError && error.statusCode === 409) {
+                res.status(409).json({ statusCode: 409, error: 'Conflict', message: error.message });
+            }
+            else {
+                next(error);
+            }
+        }
+    }
+
 
     // --- Méthodes pour Règles de Disponibilité ---
 
@@ -310,6 +360,49 @@ export class EstablishmentController {
             res.status(204).send();
         } catch (error) {
             next(error);
+        }
+    }
+
+    // GET /establishments/:establishmentId/memberships
+    async getMemberships(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const establishmentId = parseInt(req.params.establishmentId, 10); // Validé par middleware
+            const actorMembership = req.membership; // Attaché par ensureMembership(['ADMIN'])
+            if (!actorMembership) { throw new AppError('MiddlewareError', 500, 'Actor membership data not found.'); }
+
+            const memberships = await this.membershipService!.getMembershipsByEstablishment(establishmentId, actorMembership);
+            // Mapper vers DTO pour la réponse (potentiellement dans le service ou ici)
+            const outputDtos = memberships.map(m => mapToMembershipDto(m));
+
+            res.status(200).json(outputDtos);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // GET /establishments/:establishmentId/memberships/:membershipId
+    async getMembershipById(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const establishmentId = parseInt(req.params.establishmentId, 10); // Validé par middleware
+            const membershipId = parseInt(req.params.membershipId, 10);
+            if (isNaN(membershipId)) { throw new AppError('InvalidParameter', 400, 'Invalid membership ID.'); }
+
+            const actorMembership = req.membership; // Attaché par middleware (Admin ou Staff)
+            if (!actorMembership) { throw new AppError('MiddlewareError', 500, 'Actor membership data not found.'); }
+
+            const membership = await this.membershipService!.getMembershipById(membershipId, establishmentId, actorMembership);
+            const outputDto = mapToMembershipDto(membership); // Mapper
+
+            res.status(200).json(outputDto);
+        } catch (error) {
+            // Gérer MembershipNotFoundError (404) et AuthorizationError (403)
+            if (error instanceof MembershipNotFoundError) {
+                res.status(404).json({ statusCode: 404, error: 'Not Found', message: error.message });
+            } else if (error instanceof AuthorizationError) {
+                res.status(403).json({ statusCode: 403, error: 'Forbidden', message: error.message });
+            } else {
+                next(error);
+            }
         }
     }
 }

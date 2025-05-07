@@ -3,6 +3,7 @@ import { Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin } f
 import User from './User';
 import Establishment from './Establishment';
 import Service from './Service';
+import Membership from './Membership';
 
 export enum BookingStatus {
     PENDING_CONFIRMATION = 'PENDING_CONFIRMATION', // Si l'admin doit valider
@@ -26,6 +27,7 @@ interface BookingAttributes {
     user_id: number; // FK vers User (client)
     establishment_id: number; // FK vers Establishment
     service_id: number; // FK vers Service
+    assignedMembershipId: number | null; // FK vers Membership (Staff)
     start_datetime: Date; // Timestamp précis début
     end_datetime: Date; // Timestamp précis fin
     status: BookingStatus;
@@ -38,13 +40,14 @@ interface BookingAttributes {
     updatedAt?: Date;
 }
 
-interface BookingCreationAttributes extends Optional<BookingAttributes, 'id' | 'payment_status' | 'user_notes' | 'establishment_notes' | 'createdAt' | 'updatedAt'> {}
+interface BookingCreationAttributes extends Optional<BookingAttributes, 'id' | 'payment_status' | 'user_notes' | 'establishment_notes' | 'assignedMembershipId' | 'createdAt' | 'updatedAt'> {}
 
 class Booking extends Model<BookingAttributes, BookingCreationAttributes> implements BookingAttributes {
     public id!: number;
     public user_id!: number;
     public establishment_id!: number;
     public service_id!: number;
+    public assignedMembershipId!: number | null;
     public start_datetime!: Date;
     public end_datetime!: Date;
     public status!: BookingStatus;
@@ -70,10 +73,15 @@ class Booking extends Model<BookingAttributes, BookingCreationAttributes> implem
     public setService!: BelongsToGetAssociationMixin<Service>;
     public createService!: BelongsToGetAssociationMixin<Service>;
 
+    public getAssignedMember!: BelongsToGetAssociationMixin<Membership>;
+    public setAssignedMember!: BelongsToGetAssociationMixin<Membership>;
+    public createAssignedMember!: BelongsToGetAssociationMixin<Membership>;
+
     // --- Associations ---
     public readonly client?: User;
     public readonly establishment?: Establishment;
     public readonly service?: Service;
+    public readonly assignedMember?: Membership | null;
 }
 
 export const initBooking = (sequelize: Sequelize) => {
@@ -101,6 +109,13 @@ export const initBooking = (sequelize: Sequelize) => {
                 onUpdate: 'CASCADE',
                 onDelete: 'SET NULL' // Garde la résa si le service est supprimé mais en changeant le statut? Ou CASCADE? SET NULL + statut CANCELLED peut être mieux.
             },
+            assignedMembershipId: {
+                type: DataTypes.INTEGER.UNSIGNED,
+                allowNull: true, // Une réservation n'est pas forcément assignée
+                references: { model: 'memberships', key: 'id' },
+                onUpdate: 'CASCADE',
+                onDelete: 'SET NULL' // Si le membre est retiré, garde la résa mais sans assignation
+            },
             start_datetime: { type: DataTypes.DATE, allowNull: false },
             end_datetime: { type: DataTypes.DATE, allowNull: false },
             status: { type: DataTypes.ENUM(...Object.values(BookingStatus)), allowNull: false },
@@ -120,6 +135,7 @@ export const initBooking = (sequelize: Sequelize) => {
                 { fields: ['user_id'] },
                 { fields: ['establishment_id'] },
                 { fields: ['service_id'] },
+                { fields: ['assigned_membership_id'] },
                 { fields: ['status'] },
                 { fields: ['start_datetime', 'end_datetime'] }
             ]

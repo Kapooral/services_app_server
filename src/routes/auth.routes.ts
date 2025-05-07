@@ -24,5 +24,7 @@ export const createAuthRouter = (authService: AuthService, userService: UserServ
     router.post('/mfa/totp/enable', requireAuth, authController.enableTotp);
     router.delete('/mfa/totp/disable', requireAuth, authController.disableTotp);
 
+    router.post('/register-via-invitation', authController.registerViaInvitation);
+
     return router;
 };

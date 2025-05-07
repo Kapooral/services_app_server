@@ -3,8 +3,9 @@ import { Router } from 'express';
 import { ServiceService } from '../services/service.service';
 import { AvailabilityService } from '../services/availability.service';
 import { ServiceController } from '../controllers/service.controller';
-import { requireAuth, requireRole, requireServiceOwner } from '../middlewares/auth.middleware';
+import { requireAuth, requireRole, requireServiceOwner, ensureMembership } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
+import { MembershipRole } from '../models'
 
 export interface ServiceRouters {
     servicesRootRouter: Router; // Router pour /api/services/:serviceId/...
@@ -50,14 +51,14 @@ export const createServiceRouter = (
         '/',
         // Middleware ensureOwnsEstablishment est appliqué sur le routeur parent (my-establishment.routes.ts)
         // requireAuth est aussi appliqué en amont
-        requireRole(ESTABLISHMENT_ADMIN_ROLE_NAME), // Vérifie le rôle
+        ensureMembership([MembershipRole.ADMIN]), // Vérifie le rôle
         verifyCsrfToken,
         serviceController.createForMyEstablishment // Appel Corrigé
     );
     myServicesRouter.get(
         '/',
         // Middlewares ensureOwnsEstablishment et requireAuth appliqués en amont
-        requireRole(ESTABLISHMENT_ADMIN_ROLE_NAME), // Vérifie le rôle
+        ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]), // Vérifie le rôle
         serviceController.getOwnedForMyEstablishment // Appel Corrigé
     );
 

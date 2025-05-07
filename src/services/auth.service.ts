@@ -14,7 +14,13 @@ import { LoginInitiateDto, PreTwoFactorPayload, AccessTokenPayload, RefreshToken
 import { InvalidCredentialsError, TwoFactorRequiredError, InvalidPre2FATokenError, TwoFactorMethodUnavailableError, InvalidTwoFactorCodeError, TwoFactorNotEnabledError } from '../errors/auth.errors';
 import { AppError } from '../errors/app.errors';
 import { UserNotFoundError } from '../errors/user.errors';
+import { InvitationTokenInvalidError } from '../errors/membership.errors';
 import { encryptionService, EncryptionService } from './encryption.service'; // Importer l'instance et le type
+
+import { MembershipService } from './membership.service';
+import { RegisterViaInvitationDto } from '../dtos/membership.validation';
+import { MembershipAttributes } from '../models/Membership';
+import { UserCreationAttributes } from '../models/User';
 
 // --- Constantes --- (inchangées)
 const JWT_SECRET = process.env.JWT_SECRET || 'YOUR_SUPER_SECRET_KEY';
@@ -34,20 +40,23 @@ export class AuthService {
     private notificationService: INotificationService;
     private userModel: ModelCtor<User>;
     private refreshTokenModel: ModelCtor<RefreshToken>;
-    private encryptionService: EncryptionService; // Déclarer la propriété
+    private encryptionService: EncryptionService;
+    private membershipService: MembershipService;
 
     constructor(
         userService: UserService,
         notificationService: INotificationService,
         userModel: ModelCtor<User>,
         refreshTokenModel: ModelCtor<RefreshToken>,
-        encryptionSrv: EncryptionService // Accepter le service en argument
+        encryptionSrv: EncryptionService,
+        membershipService: MembershipService
     ) {
         this.userService = userService;
         this.notificationService = notificationService;
         this.userModel = userModel;
         this.refreshTokenModel = refreshTokenModel;
-        this.encryptionService = encryptionSrv; // Initialiser la propriété
+        this.encryptionService = encryptionSrv;
+        this.membershipService = membershipService
     }
 
     // --- Méthodes privées --- (inchangées)
@@ -88,6 +97,12 @@ export class AuthService {
         for (let i = 0; i < length; i++) { code += chars.charAt(Math.floor(Math.random() * chars.length)); }
         return code;
     }
+
+    /*
+    public setMembershipService(service: MembershipService): void {
+        this.membershipService = service
+    }
+     */
 
     // --- Méthodes publiques --- (inchangées, mais utilisent maintenant this.encryptionService)
 
@@ -521,5 +536,91 @@ export class AuthService {
 
         // Si aucune correspondance n'a été trouvée
         return false;
+    }
+
+    async registerViaInvitation(
+        registerDto: RegisterViaInvitationDto,
+        req?: Request
+    ): Promise<{ tokens: AuthTokensDto, membership: MembershipAttributes }> {
+        if (!this.membershipService) {
+            throw new AppError('ServiceNotInitialized', 500, 'MembershipService is not available in AuthService.');
+        }
+
+        const { username, password, token: plainToken } = registerDto;
+
+        let invitationDetails: { invitedEmail: string };
+        try {
+            invitationDetails = await this.membershipService.getInvitationDetails(plainToken);
+        } catch (error) {
+            // --- GESTION D'ERREUR TYPÉE ---
+            let errorMessage = "An unexpected error occurred while validating the invitation token.";
+            let errorName = "UnknownTokenValidationError";
+            let statusCode = 500;
+
+            if (error instanceof Error) { // Vérifie si c'est une instance d'Erreur standard
+                errorMessage = error.message;
+                errorName = error.name;
+                // Vérifier si c'est notre erreur spécifique
+                if (error instanceof InvitationTokenInvalidError) {
+                    statusCode = 400; // Statut spécifique pour token invalide
+                    errorName = 'InvalidInvitationToken';
+                } else if (error instanceof AppError) {
+                    statusCode = error.statusCode; // Utiliser le statut de l'AppError si c'en est une
+                }
+            } else {
+                // Gérer le cas où ce n'est pas un objet Error (rare)
+                errorMessage = String(error);
+            }
+
+            console.error(`[registerViaInvitation] Error caught from getInvitationDetails: Name: ${errorName}, Msg: ${errorMessage}`);
+
+            // Si c'était l'erreur de token invalide, on la remonte comme AppError 400
+            if (errorName === 'InvitationTokenInvalidError' || error instanceof InvitationTokenInvalidError) {
+                throw new AppError('InvalidInvitationToken', 400, errorMessage);
+            }
+
+            // Pour les autres erreurs inattendues pendant la validation du token, relancer une erreur 500
+            console.error("[registerViaInvitation] Rethrowing unexpected error from getInvitationDetails as 500.");
+            throw new AppError(errorName, statusCode, errorMessage); // Relancer avec les infos extraites
+            // --- FIN GESTION D'ERREUR TYPÉE ---
+        }
+        const invitedEmail = invitationDetails.invitedEmail;
+
+        try {
+            // --- Le reste de la logique ---
+            const newUser = await this.userService.createUser({ /* ... */ } as UserCreationAttributes);
+            const activatedMembership = await this.membershipService.activateByToken(plainToken, newUser.id);
+            const tokens = await this._generateAuthTokens(newUser, req);
+            this.membershipService.notifyAdminsMemberJoined(activatedMembership.get({ plain: true }))
+                .catch(err => console.error(`Failed background task: notifyAdminsMemberJoined for membership ${activatedMembership.id}`, err));
+            return { tokens, membership: activatedMembership.get({ plain: true }) };
+
+        } catch (error) { // Catch pour les erreurs de createUser, activateByToken etc.
+            // --- GESTION D'ERREUR TYPÉE (Bloc Principal) ---
+            let errorMessage = "An unexpected error occurred during registration.";
+            let errorName = "RegistrationFailed";
+            let statusCode = 500;
+
+            if (error instanceof Error) {
+                errorMessage = error.message;
+                errorName = error.name;
+                if (error instanceof AppError) {
+                    statusCode = error.statusCode; // Garder le statut spécifique des AppErrors (ex: 409 pour Duplicate)
+                }
+                // Gérer spécifiquement InvitationTokenInvalidError si activateByToken la lève
+                else if (error instanceof InvitationTokenInvalidError) {
+                    statusCode = 400; // Échec activation = Bad Request
+                    errorName = 'ActivationFailed';
+                }
+            } else {
+                errorMessage = String(error);
+            }
+
+            console.error(`[registerViaInvitation] Error during user creation or activation: Name: ${errorName}, Status: ${statusCode}, Msg: ${errorMessage}`);
+
+            // Relancer comme une AppError avec les informations collectées
+            throw new AppError(errorName, statusCode, errorMessage);
+            // --- FIN GESTION D'ERREUR TYPÉE (Bloc Principal) ---
+        }
     }
 }
