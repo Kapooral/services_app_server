@@ -1,11 +1,11 @@
 // src/services/membership.service.ts
-import { ModelCtor, Op } from 'sequelize';
+import {ModelCtor, Op, WhereOptions, Order, Includeable, FindOptions} from 'sequelize';
 import crypto from 'crypto';
 import db from '../models'; // Accès à tous les modèles via db
-import User from '../models/User';
+import User, { UserAttributes } from '../models/User';
 import Establishment from '../models/Establishment';
 import Membership, { MembershipStatus, MembershipRole, MembershipAttributes } from '../models/Membership';
-import { InviteMemberDto, UpdateMembershipDto  } from '../dtos/membership.validation';
+import { InviteMemberDto, UpdateMembershipDto, GetMembershipsQueryDto } from '../dtos/membership.validation';
 import { INotificationService } from './notification.service';
 import { AppError } from '../errors/app.errors';
 import { MembershipNotFoundError, InvitationTokenInvalidError, UserAlreadyMemberError, CannotUpdateLastAdminError, CannotDeleteLastAdminError } from '../errors/membership.errors';
@@ -257,24 +257,76 @@ export class MembershipService {
      * Récupère la liste des memberships pour un établissement donné.
      * Vérifie que l'appelant est ADMIN de cet établissement.
      */
-    async getMembershipsByEstablishment(establishmentId: number, actorMembership: MembershipAttributes): Promise<Membership[]> {
-        // Le middleware ensureMembership(['ADMIN']) a déjà validé l'appartenance et le rôle de l'acteur
-        console.log(`[getMembershipsByEstablishment] Fetching memberships for establishment ${establishmentId}, requested by user ${actorMembership.userId}`);
+    async getMembershipsByEstablishment(
+        establishmentId: number,
+        actorMembership: MembershipAttributes,
+        queryOptions: GetMembershipsQueryDto
+    ): Promise<{ rows: Membership[]; count: number; totalPages: number; currentPage: number }> {
+        console.log(`[getMembershipsByEstablishment] Fetching memberships for establishment ${establishmentId}, requested by user ${actorMembership.userId}, query:`, queryOptions);
 
-        return this.membershipModel.findAll({
-            where: { establishmentId },
-            include: [{
-                model: this.userModel,
-                as: 'user',
-                attributes: ['id', 'username', 'email', 'profile_picture'] // Exclure infos sensibles
-            }],
-            order: [
-                // Trier par rôle puis par date d'ajout peut être pertinent
-                ['role', 'ASC'],
-                ['joinedAt', 'ASC'],
-                ['createdAt', 'ASC']
-            ]
-        });
+        const { page, limit, status: queryStatus, role, search, sortBy, sortOrder: querySortOrder } = queryOptions;
+        const offset = (page - 1) * limit;
+
+        const whereClausesForAnd: WhereOptions<MembershipAttributes>[] = [{ establishmentId }];
+
+        if (queryStatus) { whereClausesForAnd.push({ status: queryStatus }); }
+        else { whereClausesForAnd.push({ status: MembershipStatus.ACTIVE }); }
+
+        if (role) { whereClausesForAnd.push({ role }); }
+
+        if (search) {
+            const searchTerm = `%${search}%`;
+            const likeOperator = db.sequelize.getDialect() === 'postgres' ? Op.iLike : Op.like;
+
+            const searchOrConditions: WhereOptions[] = [
+                { '$user.username$': { [likeOperator]: searchTerm } },
+                { '$user.email$': { [likeOperator]: searchTerm } },
+                { invitedEmail: { [likeOperator]: searchTerm } }
+            ];
+            whereClausesForAnd.push({ [Op.or]: searchOrConditions });
+        }
+
+        const findOptions: FindOptions = {
+            limit, offset,
+            include: [],
+            order: [],
+            subQuery: false,
+        };
+
+        if (whereClausesForAnd.length > 1) {
+            findOptions.where = { [Op.and]: whereClausesForAnd };
+        } else if (whereClausesForAnd.length === 1) {
+            findOptions.where = whereClausesForAnd[0];
+        } else {
+            findOptions.where = {};
+        }
+
+        const orderClause: Order = [];
+        const sortDirection = querySortOrder || (['createdAt', 'joinedAt'].includes(sortBy) ? 'DESC' : 'ASC');
+        switch (sortBy) {
+            case 'username':
+                orderClause.push([{ model: this.userModel, as: 'user' }, 'username', sortDirection]);
+                break;
+            case 'email':
+                orderClause.push([{ model: this.userModel, as: 'user' }, 'email', sortDirection]);
+                break;
+            case 'joinedAt':
+                orderClause.push([sortBy, sortDirection]);
+                break;
+        }
+        orderClause.push(['id', 'ASC']);
+        findOptions.order = orderClause
+
+        const userInclude: Includeable = {
+            model: this.userModel, as: 'user',
+            attributes: ['id', 'username', 'email', 'profile_picture'], required: false,
+        };
+        findOptions.include = [userInclude]
+
+        const { count, rows } = await this.membershipModel.findAndCountAll(findOptions);
+        const totalPages = Math.ceil(count / limit);
+
+        return { rows, count, totalPages, currentPage: page };
     }
 
     /**

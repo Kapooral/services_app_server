@@ -89,7 +89,7 @@ export class UserService {
         return `${visiblePrefix}${maskedPart}${visibleSuffix}`;
     }
 
-    async createUser(userData: CreateUserDto): Promise<User> {
+    async createUser(userData: CreateUserDto, is_email_invitation=false): Promise<User> {
         const existingUser = await this.userModel.findOne({ where: { [Op.or]: [{ email: userData.email }, { username: userData.username }] }});
         if (existingUser) {
             if (existingUser.email === userData.email) throw new DuplicateEmailError();
@@ -111,16 +111,20 @@ export class UserService {
                 password: hash,
                 email_masked,
                 phone_masked,
-                is_active: false,
-                is_email_active: false,
+                is_active: is_email_invitation,
+                is_email_active: is_email_invitation,
                 email_activation_token: hashedActivationToken,
                 email_activation_token_expires_at: activationExpiresAt,
-                is_two_factor_enabled: false // Default
+                is_two_factor_enabled: is_email_invitation // Default
             } as Omit<UserAttributes, 'salt' | 'id'>); // Adapter le type ici aussi si UserAttributes a encore 'salt'
-            try {
-                await this.notificationService.sendActivationEmail(newUser.email, plainActivationToken);
-            } catch (emailError) {
-                console.error(`Failed to send activation email to ${newUser.email} for user ${newUser.id}:`, emailError);
+
+            if (is_email_invitation) {
+                try { await this.notificationService.sendWelcomeEmail(newUser.email) }
+                catch (emailError) { console.error(`Failed to send welcome email to ${newUser.email}:`, emailError); }
+            }
+            else {
+                try { await this.notificationService.sendActivationEmail(newUser.email, plainActivationToken); }
+                catch (emailError) { console.error(`Failed to send activation email to ${newUser.email} for user ${newUser.id}:`, emailError); }
             }
 
             if (this.authService) {

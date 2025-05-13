@@ -774,15 +774,16 @@ describe('Membership Invitation & Acceptance Integration Tests', () => {
                 .set('Authorization', `Bearer ${adminAccessToken}`);
 
             expect(response.status).toBe(200);
-            expect(Array.isArray(response.body)).toBe(true);
-            // On s'attend à 4 membres dans mainEstablishment après le setup de ce describe
-            // adminUser, staffUser, inactiveMemberUser (via membership), PENDING_EMAIL (via invite)
-            expect(response.body.length).toBeGreaterThanOrEqual(4); // >= car d'autres tests pourraient en créer
+            expect(response.body).toHaveProperty('data');
+            expect(response.body).toHaveProperty('pagination');
+            expect(Array.isArray(response.body.data)).toBe(true);
+            expect(response.body.pagination.totalItems).toBe(6);
 
-            const foundAdmin = response.body.find((m: any) => m.user?.id === adminUser.id && m.role === MembershipRole.ADMIN && m.status === MembershipStatus.ACTIVE);
-            const foundStaff = response.body.find((m: any) => m.user?.id === staffUser.id && m.role === MembershipRole.STAFF && m.status === MembershipStatus.ACTIVE);
-            const foundInactive = response.body.find((m: any) => m.user?.id === inactiveMemberUser.id && m.role === MembershipRole.STAFF && m.status === MembershipStatus.INACTIVE);
-            const foundPending = response.body.find((m: any) => m.invitedEmail === PENDING_EMAIL && m.status === MembershipStatus.PENDING);
+            const membersList = response.body.data;
+            const foundAdmin = membersList.find((m: any) => m.user?.id === adminUser.id && m.role === MembershipRole.ADMIN && m.status === MembershipStatus.ACTIVE);
+            const foundStaff = membersList.find((m: any) => m.user?.id === staffUser.id && m.role === MembershipRole.STAFF && m.status === MembershipStatus.ACTIVE);
+            const foundInactive = membersList.find((m: any) => m.user?.id === inactiveMemberUser.id && m.role === MembershipRole.STAFF && m.status === MembershipStatus.INACTIVE);
+            const foundPending = membersList.find((m: any) => m.invitedEmail === PENDING_EMAIL && m.status === MembershipStatus.PENDING);
 
             expect(foundAdmin).toBeDefined();
             expect(foundAdmin.user.username).toBe(adminUser.username);
@@ -791,7 +792,7 @@ describe('Membership Invitation & Acceptance Integration Tests', () => {
             expect(foundInactive).toBeDefined();
             expect(foundInactive.user.username).toBe(inactiveMemberUser.username);
             expect(foundPending).toBeDefined();
-            expect(foundPending.user).toBeNull(); // User est null pour PENDING
+            expect(foundPending.user).toBeNull();
         });
 
         it('[Sécurité] should return 403 if Staff tries to list members', async () => {
@@ -825,9 +826,12 @@ describe('Membership Invitation & Acceptance Integration Tests', () => {
                 .get(`${API_BASE}/users/me/establishments/${newEmptyEstab.id}/memberships`)
                 .set('Authorization', `Bearer ${otherAdminAccessToken}`);
             expect(response.status).toBe(200);
-            expect(Array.isArray(response.body)).toBe(true);
-            expect(response.body.length).toBe(1); // Seulement l'admin lui-même
-            expect(response.body[0].user.id).toBe(otherAdminUser.id);
+            expect(response.body).toHaveProperty('data');
+            expect(response.body).toHaveProperty('pagination');
+            expect(Array.isArray(response.body.data)).toBe(true);
+            expect(response.body.data.length).toBe(1);
+            expect(response.body.data[0].user.id).toBe(otherAdminUser.id);
+            expect(response.body.pagination.totalItems).toBe(1);
         });
 
         it('[Edge Case] should return 404 for a non-existent establishment', async () => {
@@ -844,6 +848,444 @@ describe('Membership Invitation & Acceptance Integration Tests', () => {
                 .set('Authorization', `Bearer ${adminAccessToken}`);
             expect(response.status).toBe(400);
         });
+
+        // --- I. Pagination ---
+        describe('Pagination Tests', () => {
+            const TOTAL_MEMBERS_FOR_PAGINATION = 15; // admin + staff + inactive + pending (4) + 11 extra
+
+            beforeEach(async () => {
+                const existingMembersCount = await db.Membership.count({ where: { establishmentId: mainEstablishment.id }});
+                const staffToCreateForPagination = TOTAL_MEMBERS_FOR_PAGINATION - existingMembersCount;
+
+                if (staffToCreateForPagination > 0) {
+                    const staffUsersData = [];
+                    for (let i = 0; i < staffToCreateForPagination; i++) {
+                        staffUsersData.push({
+                            username: `page_staff_p${i}`, // préfixe 'p' pour éviter collisions de noms
+                            email: `page_staff_p${i}@test.com`,
+                            password: PASSWORD,
+                            is_active: true,
+                            is_email_active: true
+                        });
+                    }
+                    // S'assurer que les emails sont uniques, même entre les exécutions de beforeEach
+                    const uniqueStaffUsersData = staffUsersData.map((u, i) => ({ ...u, email: `page_staff_p${i}_${Date.now()}@test.com` }));
+
+                    const createdStaffUsers = await Promise.all(uniqueStaffUsersData.map(data => generateTestUser(data)));
+
+                    const staffRole = await db.Role.findOne({ where: { name: ROLES.STAFF } });
+                    const clientRole = await db.Role.findOne({ where: { name: ROLES.CLIENT } });
+                    if (!staffRole || !clientRole) throw new Error("Staff/Client role not found for pagination setup.");
+
+                    const membershipsToCreate = [];
+                    for (const user of createdStaffUsers) {
+                        membershipsToCreate.push({
+                            userId: user.id,
+                            establishmentId: mainEstablishment.id,
+                            role: MembershipRole.STAFF,
+                            status: MembershipStatus.ACTIVE,
+                            joinedAt: new Date(Date.now() - Math.random() * 1000 * 3600 * 24 * 5)
+                        });
+                        await db.UserRole.bulkCreate([
+                            { userId: user.id, roleId: staffRole.id },
+                            { userId: user.id, roleId: clientRole.id },
+                        ]);
+                    }
+                    await db.Membership.bulkCreate(membershipsToCreate);
+                }
+            });
+
+            it('Fonctionnel - Pagination (Page 1, Limite par Défaut): Devrait retourner la première page de membres (max 10) et les métadonnées correctes', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+
+                expect(response.status).toBe(200);
+                expect(Array.isArray(response.body.data)).toBe(true);
+                expect(response.body.data.length).toBeLessThanOrEqual(10);
+                expect(response.body.pagination.currentPage).toBe(1);
+                expect(response.body.pagination.itemsPerPage).toBe(10); // Valeur par défaut du DTO
+                expect(response.body.pagination.totalItems).toBe(TOTAL_MEMBERS_FOR_PAGINATION);
+                expect(response.body.pagination.totalPages).toBe(Math.ceil(TOTAL_MEMBERS_FOR_PAGINATION / 10));
+            });
+
+            it('Fonctionnel - Pagination (Page 2, Limite par Défaut): Devrait retourner la deuxième page de membres', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?page=2`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+
+                expect(response.status).toBe(200);
+                expect(Array.isArray(response.body.data)).toBe(true);
+                expect(response.body.data.length).toBeLessThanOrEqual(10); // Peut être moins si dernière page
+                if (TOTAL_MEMBERS_FOR_PAGINATION > 10) {
+                    expect(response.body.data.length).toBe(TOTAL_MEMBERS_FOR_PAGINATION - 10);
+                }
+                expect(response.body.pagination.currentPage).toBe(2);
+                expect(response.body.pagination.totalItems).toBe(TOTAL_MEMBERS_FOR_PAGINATION);
+            });
+
+            it('Fonctionnel - Pagination (Limite Spécifique): Devrait retourner le nombre de membres spécifié par `limit`', async () => {
+                const customLimit = 5;
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?limit=${customLimit}`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(customLimit);
+                expect(response.body.pagination.itemsPerPage).toBe(customLimit);
+                expect(response.body.pagination.totalPages).toBe(Math.ceil(TOTAL_MEMBERS_FOR_PAGINATION / customLimit));
+            });
+
+            it('Edge Case - Pagination (Page Vide / Au-delà du Nombre Total de Pages): Devrait retourner un tableau de données vide', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?page=999`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+
+                expect(response.status).toBe(200);
+                expect(response.body.data).toEqual([]);
+                expect(response.body.pagination.currentPage).toBe(999);
+                expect(response.body.pagination.totalItems).toBe(TOTAL_MEMBERS_FOR_PAGINATION);
+                expect(response.body.pagination.totalPages).toBe(Math.ceil(TOTAL_MEMBERS_FOR_PAGINATION / 10));
+            });
+
+            it('Edge Case - Pagination (Limite Maximale): Devrait respecter la limite maximale de 100', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?limit=200`) // Dépasse le max de Zod (100)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+
+            it('Edge Case - Pagination (Limite valide mais chaîne): Devrait appliquer la limite et retourner 200', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?limit=50`) // "50" en chaîne
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.pagination.itemsPerPage).toBe(50);
+            });
+
+            it('Adversarial - Pagination (Paramètre `page` invalide string): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?page=abc`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+
+            it('Adversarial - Pagination (Paramètre `page` invalide <=0): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?page=0`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+
+            it('Adversarial - Pagination (Paramètre `limit` invalide string): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?limit=xyz`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+        });
+
+        // --- II. Filtrage ---
+        describe('Filtrage Tests', () => {
+            // Le beforeEach externe crée admin (ACTIVE, ADMIN), staff (ACTIVE, STAFF), inactive (INACTIVE, STAFF), pending (PENDING, STAFF)
+
+            it('Fonctionnel - Filtre par `status=ACTIVE`: Devrait retourner uniquement les membres actifs', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?status=ACTIVE`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBeGreaterThan(0);
+                response.body.data.forEach((m: any) => expect(m.status).toBe(MembershipStatus.ACTIVE));
+                const activeMembersInDb = await db.Membership.count({
+                    where: { establishmentId: mainEstablishment.id, status: MembershipStatus.ACTIVE }
+                });
+                expect(response.body.pagination.totalItems).toBe(activeMembersInDb);
+            });
+
+            it('Fonctionnel - Filtre par `status=PENDING`: Devrait retourner uniquement les invitations en attente', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?status=PENDING`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(1); // Un seul PENDING créé dans le beforeEach externe
+                response.body.data.forEach((m: any) => expect(m.status).toBe(MembershipStatus.PENDING));
+            });
+
+            it('Fonctionnel - Filtre par `role=ADMIN`: Devrait retourner uniquement les membres ADMIN', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?role=ADMIN`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBeGreaterThan(0);
+                response.body.data.forEach((m: any) => expect(m.role).toBe(MembershipRole.ADMIN));
+                const adminMembersInDb = await db.Membership.count({
+                    where: { establishmentId: mainEstablishment.id, role: MembershipRole.ADMIN }
+                });
+                expect(response.body.pagination.totalItems).toBe(adminMembersInDb);
+            });
+
+            it('Fonctionnel - Filtre par `role=STAFF`: Devrait retourner uniquement les membres STAFF', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?role=STAFF`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBeGreaterThan(0);
+                response.body.data.forEach((m: any) => expect(m.role).toBe(MembershipRole.STAFF));
+                const staffMembersInDb = await db.Membership.count({
+                    where: { establishmentId: mainEstablishment.id, role: MembershipRole.STAFF }
+                });
+                expect(response.body.pagination.totalItems).toBe(staffMembersInDb);
+            });
+
+            it('Fonctionnel - Filtre combiné (`status=ACTIVE` et `role=STAFF`): Devrait retourner les STAFF actifs', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?status=ACTIVE&role=STAFF`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBeGreaterThanOrEqual(1); // staffUser + others from pagination
+                response.body.data.forEach((m: any) => {
+                    expect(m.status).toBe(MembershipStatus.ACTIVE);
+                    expect(m.role).toBe(MembershipRole.STAFF);
+                });
+            });
+
+            it('Edge Case - Filtre ne retournant aucun résultat: Devrait retourner un tableau vide', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?role=ADMIN&status=PENDING`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data).toEqual([]);
+                expect(response.body.pagination.totalItems).toBe(0);
+            });
+
+            it('Adversarial - Filtre (Paramètre `status` invalide): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?status=INVALID_STATUS`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+        });
+
+        // --- III. Filtrage par `search` ---
+        describe('Filtrage par `search` Tests', () => {
+            let searchPendingUserEmail: string;
+            let searchUserJohn: UserAttributes;
+
+            beforeEach(async () => {
+                searchPendingUserEmail = `search_pending_${Date.now()}@test.com`;
+                await adminAgent
+                    .post(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships/invite`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`)
+                    .send({ email: searchPendingUserEmail, role: MembershipRole.STAFF });
+
+                searchUserJohn = await generateTestUser({
+                    username: `john_unique_search_${Date.now()}`, // Rendre username unique aussi
+                    email: `john.unique.search_${Date.now()}@example.com`,
+                    password: PASSWORD,
+                    is_active: true,
+                    is_email_active: true
+                });
+                const staffRole = await db.Role.findOne({ where: { name: ROLES.STAFF } });
+                const clientRole = await db.Role.findOne({ where: { name: ROLES.CLIENT } });
+                if (!staffRole || !clientRole) throw new Error("Roles not found for search user setup");
+
+                await db.UserRole.bulkCreate([ { userId: searchUserJohn.id, roleId: staffRole.id }, { userId: searchUserJohn.id, roleId: clientRole.id }]);
+                await db.Membership.create({
+                    userId: searchUserJohn.id,
+                    establishmentId: mainEstablishment.id,
+                    role: MembershipRole.STAFF,
+                    status: MembershipStatus.ACTIVE,
+                    joinedAt: new Date()
+                });
+            });
+
+            it('Fonctionnel - Filtre `search` sur `username`: Devrait trouver le membre', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=john_unique`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(1);
+                expect(response.body.data[0].user.username).toBe(searchUserJohn.username);
+            });
+
+            it('Fonctionnel - Filtre `search` sur `email`: Devrait trouver le membre', async () => {
+                expect(searchUserJohn).toBeDefined();
+                expect(searchUserJohn.email).toBeDefined();
+
+                const emailSearchTerm = searchUserJohn.email
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=${emailSearchTerm}`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(1);
+                const foundUser = response.body.data.find((m: any) => m.user?.id === searchUserJohn.id);
+                expect(foundUser).toBeDefined();
+                expect(foundUser.user.email).toBe(searchUserJohn.email);
+            });
+
+            it('Fonctionnel - Filtre `search` sur `invitedEmail` (PENDING): Devrait trouver l\'invitation', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=search_pending`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(1);
+                expect(response.body.data[0].invitedEmail).toContain('search_pending');
+                expect(response.body.data[0].status).toBe(MembershipStatus.PENDING);
+            });
+
+            it('Fonctionnel - Filtre `search` (casse insensible): Devrait trouver le membre', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=JOHN_UNIQUE`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBe(1);
+                expect(response.body.data[0].user.username).toBe(searchUserJohn.username);
+            });
+
+            it('Edge Case - Filtre `search` ne retournant aucun résultat: Devrait retourner tableau vide', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=nonexistentXYZ123`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                expect(response.body.data).toEqual([]);
+            });
+
+            it('Adversarial - Filtre `search` (chaîne vide après trim): Devrait retourner 400 (Zod min(1) sur `search`)', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?search=`) // search est vide
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400); // Zod devrait rejeter car min(1)
+            });
+        });
+
+        // --- IV. Tri ---
+        describe('Tri Tests', () => {
+            // Les utilisateurs (adminUser, staffUser, inactiveMemberUser, yetAnotherStaffUser)
+            // ont des usernames variés. Les dates joinedAt/createdAt sont aussi variées par le setup.
+            // adminUser: member_admin
+            // staffUser: member_staff
+            // inactiveMemberUser: inactive_member
+            // yetAnotherStaffUser: another_staff
+            // Les usernames pour le tri ASC: another_staff, inactive_member, member_admin, member_staff (en excluant les PENDING et les utilisateurs de pagination/search)
+
+            it('Fonctionnel - Tri par `username` ASC (défaut pour string): Devrait trier par username ascendant', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=username&limit=50`) // Assez de limite pour voir l'ordre
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                const usernames = response.body.data
+                    .filter((m: any) => m.user) // Exclure PENDING qui n'ont pas de user.username
+                    .map((m: any) => m.user.username);
+                // Comparer avec la liste triée attendue (partielle, car il y a les users de pagination)
+                expect(usernames).toEqual([...usernames].sort());
+            });
+
+            it('Fonctionnel - Tri par `username` DESC: Devrait trier par username descendant', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=username&sortOrder=DESC&limit=50`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                const usernames = response.body.data
+                    .filter((m: any) => m.user)
+                    .map((m: any) => m.user.username);
+                expect(usernames).toEqual([...usernames].sort().reverse());
+            });
+
+            it('Fonctionnel - Tri par `createdAt` DESC (défaut pour date): Devrait trier par date de création (plus récent en premier)', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=createdAt&limit=50`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                const createdDates = response.body.data.map((m: any) => new Date(m.createdAt).getTime());
+                for (let i = 0; i < createdDates.length - 1; i++) {
+                    expect(createdDates[i]).toBeGreaterThanOrEqual(createdDates[i + 1]);
+                }
+            });
+
+            it('Fonctionnel - Tri par `joinedAt` ASC: Devrait trier par date d\'adhésion (plus ancien en premier)', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=joinedAt&sortOrder=ASC&limit=50`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                const joinedDates = response.body.data
+                    .filter((m: any) => m.joinedAt) // Filtrer ceux qui ont joinedAt (exclure PENDING)
+                    .map((m: any) => new Date(m.joinedAt).getTime());
+                for (let i = 0; i < joinedDates.length - 1; i++) {
+                    expect(joinedDates[i]).toBeLessThanOrEqual(joinedDates[i + 1]);
+                }
+            });
+
+            it('Fonctionnel - Tri par `role` ASC: Devrait trier par rôle (ADMIN avant STAFF)', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=role&sortOrder=ASC&limit=50`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(200);
+                const roles = response.body.data.map((m: any) => m.role);
+                const adminIndex = roles.findIndex((r:string) => r === MembershipRole.ADMIN);
+                const staffIndex = roles.findIndex((r:string) => r === MembershipRole.STAFF);
+                if(adminIndex !== -1 && staffIndex !== -1) { // S'il y a les deux
+                    expect(roles.lastIndexOf(MembershipRole.ADMIN)).toBeLessThan(roles.indexOf(MembershipRole.STAFF));
+                }
+            });
+
+            it('Adversarial - Tri (Paramètre `sortBy` invalide): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortBy=invalidField`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+
+            it('Adversarial - Tri (Paramètre `sortOrder` invalide): Devrait retourner 400', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?sortOrder=INVALID_ORDER`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+                expect(response.status).toBe(400);
+            });
+        });
+
+        // --- V. Combinaison de Fonctionnalités ---
+        describe('Combinaison de Fonctionnalités Tests', () => {
+            it('Fonctionnel - Pagination + Filtre Status + Tri Username: Devrait retourner la page 1 des STAFF actifs, triés par username ASC', async () => {
+                const response = await adminAgent
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?status=ACTIVE&role=STAFF&sortBy=username&sortOrder=ASC&page=1&limit=5`)
+                    .set('Authorization', `Bearer ${adminAccessToken}`);
+
+                expect(response.status).toBe(200);
+                expect(response.body.data.length).toBeLessThanOrEqual(5);
+                if (response.body.data.length > 0) { // Seulement si on a des résultats
+                    let previousUsername: string | null = null;
+                    response.body.data.forEach((m: any) => {
+                        expect(m.status).toBe(MembershipStatus.ACTIVE);
+                        expect(m.role).toBe(MembershipRole.STAFF);
+                        if (m.user && m.user.username) { // S'assurer que user et username existent
+                            if (previousUsername !== null) { // Commencer la comparaison à partir du deuxième élément
+                                expect(m.user.username.localeCompare(previousUsername)).toBeGreaterThanOrEqual(0);
+                            }
+                            previousUsername = m.user.username;
+                        } else if (m.user === null && previousUsername !== null) {
+                            throw new Error('Unexpected null user for ACTIVE STAFF member in combined test');
+                        }
+                    });
+                }
+                expect(response.body.pagination.currentPage).toBe(1);
+                const expectedCount = await db.Membership.count({
+                    where: {
+                        establishmentId: mainEstablishment.id,
+                        status: MembershipStatus.ACTIVE,
+                        role: MembershipRole.STAFF
+                    }
+                });
+                expect(response.body.pagination.totalItems).toBe(expectedCount);
+            });
+
+            it('Sécurité - Permissions avec Pagination/Filtre: Un STAFF ne devrait toujours pas lister les membres', async () => {
+                const response = await staffAgent // Utilise l'agent du staff
+                    .get(`${API_BASE}/users/me/establishments/${mainEstablishment.id}/memberships?page=1&limit=5&status=ACTIVE`)
+                    .set('Authorization', `Bearer ${staffAccessToken}`);
+                expect(response.status).toBe(403);
+            });
+        });
+
     });
 
     // =========================================================================

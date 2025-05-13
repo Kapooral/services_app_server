@@ -22,7 +22,10 @@ import { AppError } from '../errors/app.errors';
 import { ZodError } from 'zod';
 
 import { MembershipService } from '../services/membership.service';
-import { InviteMemberSchema, InviteMemberDto, MembershipDto, mapToMembershipDto  } from '../dtos/membership.validation';
+import {
+    InviteMemberSchema, InviteMemberDto, MembershipDto, mapToMembershipDto,
+    GetMembershipsQuerySchema, GetMembershipsQueryDto
+} from '../dtos/membership.validation';
 import { MembershipAttributes } from '../models/Membership';
 
 export class EstablishmentController {
@@ -366,17 +369,43 @@ export class EstablishmentController {
     // GET /establishments/:establishmentId/memberships
     async getMemberships(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
-            const establishmentId = parseInt(req.params.establishmentId, 10); // Validé par middleware
+            const establishmentId = parseInt(req.params.establishmentId, 10); // Validé par middleware ensureMembership
             const actorMembership = req.membership; // Attaché par ensureMembership(['ADMIN'])
-            if (!actorMembership) { throw new AppError('MiddlewareError', 500, 'Actor membership data not found.'); }
+            if (!actorMembership) {
+                throw new AppError('MiddlewareError', 500, 'Actor membership data not found.');
+            }
 
-            const memberships = await this.membershipService!.getMembershipsByEstablishment(establishmentId, actorMembership);
-            // Mapper vers DTO pour la réponse (potentiellement dans le service ou ici)
-            const outputDtos = memberships.map(m => mapToMembershipDto(m));
+            // Valider les paramètres de requête pour la pagination, le filtrage et le tri
+            const queryParams: GetMembershipsQueryDto = GetMembershipsQuerySchema.parse(req.query);
 
-            res.status(200).json(outputDtos);
+            const result = await this.membershipService!.getMembershipsByEstablishment(
+                establishmentId, actorMembership, queryParams // Passer les paramètres validés
+            );
+
+            // Mapper les instances Membership vers MembershipDto
+            const outputDtos = result.rows.map(m => mapToMembershipDto(m));
+
+            res.status(200).json({
+                data: outputDtos,
+                pagination: {
+                    totalItems: result.count,
+                    totalPages: result.totalPages,
+                    currentPage: result.currentPage,
+                    itemsPerPage: queryParams.limit // Utiliser le limit effectif
+                }
+            });
         } catch (error) {
-            next(error);
+            if (error instanceof ZodError) {
+                // Gérer les erreurs de validation Zod pour les query params
+                res.status(400).json({
+                    statusCode: 400,
+                    error: 'Validation Error',
+                    message: "Invalid query parameters.",
+                    details: error.errors
+                });
+            } else {
+                next(error);
+            }
         }
     }
 

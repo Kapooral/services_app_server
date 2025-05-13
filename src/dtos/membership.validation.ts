@@ -19,6 +19,7 @@ export const MembershipDtoSchema = z.object({
     createdAt: z.coerce.date(),
     updatedAt: z.coerce.date(),
     user: MembershipUserSchema,
+    invitationTokenExpiresAt: z.coerce.date().nullable(),
     invitedEmail: z.string().email().nullable().optional()
 });
 export type MembershipDto = z.infer<typeof MembershipDtoSchema>;
@@ -43,6 +44,7 @@ export function mapToMembershipDto(membership: Membership): MembershipDto {
         createdAt: membership.createdAt,
         updatedAt: membership.updatedAt,
         user: userData,
+        invitationTokenExpiresAt: membership.invitationTokenExpiresAt,
         invitedEmail: membership.invitedEmail
     };
 
@@ -103,3 +105,23 @@ export const UpdateMembershipSchema = z.object({
     });
 
 export type UpdateMembershipDto = z.infer<typeof UpdateMembershipSchema>;
+
+const validSortByFields = z.enum([
+    'createdAt',
+    'joinedAt',
+    'username', // Mappé à User.username
+    'email',    // Mappé à User.email
+    'role',
+    'status'
+]);
+
+export const GetMembershipsQuerySchema = z.object({
+    page: z.coerce.number().int().positive().optional().default(1),
+    limit: z.coerce.number().int().positive().max(100).optional().default(10),
+    status: z.nativeEnum(MembershipStatus).optional(),
+    role: z.nativeEnum(MembershipRole).optional(),
+    search: z.string().trim().min(1, "Search term cannot be empty if provided.").optional(),
+    sortBy: validSortByFields.optional().default('createdAt'),
+    sortOrder: z.enum(['ASC', 'DESC']).optional(), // Le défaut spécifique sera géré dans le service
+});
+export type GetMembershipsQueryDto = z.infer<typeof GetMembershipsQuerySchema>;

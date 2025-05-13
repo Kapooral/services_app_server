@@ -588,7 +588,7 @@ export class AuthService {
 
         try {
             // --- Le reste de la logique ---
-            const newUser = await this.userService.createUser({ /* ... */ } as UserCreationAttributes);
+            const newUser = await this.userService.createUser({ email: invitedEmail, username, password } as UserCreationAttributes, true);
             const activatedMembership = await this.membershipService.activateByToken(plainToken, newUser.id);
             const tokens = await this._generateAuthTokens(newUser, req);
             this.membershipService.notifyAdminsMemberJoined(activatedMembership.get({ plain: true }))
