@@ -25,7 +25,7 @@ import { createEstablishmentRouter } from './routes/establishment.routes';
 import { createServiceRouter, ServiceRouters } from './routes/service.routes'; // L'interface ServiceRouters est déjà importée
 import { createAvailabilityRouter } from './routes/availability.routes';
 import { createBookingRouter } from './routes/booking.routes';
-import membershipRouter from './routes/member.routes';
+import membershipRouter from './routes/membership.routes';
 // createMyEstablishmentsRootRouter et createMyEstablishmentRouter sont utilisés DANS user.routes.ts, pas ici directement.
 
 import errorMiddleware from './middlewares/error.middleware';

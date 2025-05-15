@@ -1,16 +1,28 @@
-// src/models/Country.ts
-import { Model, DataTypes, Optional, Sequelize } from 'sequelize';
+import { Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin } from 'sequelize';
+import Timezone from './Timezone';
 
-interface CountryAttributes {
+export interface CountryAttributes {
     code: string;
     name: string;
+    phone_code: string | null;
+    timezoneId: number | null;
+    createdAt?: Date;
+    updatedAt?: Date;
 }
 
-interface CountryCreationAttributes extends CountryAttributes {}
+export interface CountryCreationAttributes extends Optional<CountryAttributes, 'phone_code' | 'timezoneId' | 'createdAt' | 'updatedAt'> {}
 
 class Country extends Model<CountryAttributes, CountryCreationAttributes> implements CountryAttributes {
     public code!: string;
     public name!: string;
+    public phone_code!: string | null;
+    public timezoneId!: number | null;
+
+    public readonly createdAt!: Date;
+    public readonly updatedAt!: Date;
+
+    public readonly defaultTimezone?: Timezone | null;
+    public getDefaultTimezone!: BelongsToGetAssociationMixin<Timezone>;
 }
 
 export const initCountry = (sequelize: Sequelize) => {
@@ -18,28 +30,39 @@ export const initCountry = (sequelize: Sequelize) => {
         {
             code: {
                 type: DataTypes.STRING(2),
-                allowNull: false,
                 primaryKey: true,
+                allowNull: false,
             },
             name: {
                 type: DataTypes.STRING(100),
                 allowNull: false,
                 unique: true,
-            }
+            },
+            phone_code: {
+                type: DataTypes.STRING(10),
+                allowNull: true,
+            },
+            timezoneId: {
+                type: DataTypes.INTEGER.UNSIGNED,
+                allowNull: true,
+                references: {
+                    model: 'timezones',
+                    key: 'id',
+                },
+                onUpdate: 'CASCADE',
+                onDelete: 'SET NULL',
+                field: 'timezone_id',
+            },
         },
         {
             sequelize,
             tableName: 'countries',
             modelName: 'Country',
-            timestamps: false,
+            timestamps: true,
             underscored: true,
-            indexes: [
-                { unique: true, fields: ['name'] }
-            ]
         }
     );
     return Country;
 };
 
-export type { CountryAttributes, CountryCreationAttributes };
 export default Country;

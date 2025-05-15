@@ -37,3 +37,15 @@ export class AvailabilityOwnershipError extends AppError {
         super('AvailabilityOwnershipError', 403, message); // 403 Forbidden
     }
 }
+
+export class TimeOffRequestNotFoundError extends AppError {
+    constructor(message: string = 'Time off request not found.') {
+        super('TimeOffRequestNotFoundError', 404, message);
+    }
+}
+
+export class TimeOffRequestInvalidActionError extends AppError { // Renamed for broader use
+    constructor(message: string) { // Message will be specific to the invalid action
+        super('TimeOffRequestInvalidActionError', 409, message); // 409 Conflict or 400 Bad Request depending on context
+    }
+}

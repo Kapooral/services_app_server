@@ -12,9 +12,11 @@ import { ensureOwnsEstablishment, requireRole } from '../middlewares/auth.middle
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 import { fileService } from '../services/file.service';
 import { MembershipService } from '../services/membership.service';
-import { ensureMembership, ensureAdminOrSelfForMembership } from '../middlewares/auth.middleware';
+import { ensureMembership, ensureAdminOrSelfForMembership, ensureCanListMemberTimeOffRequestsOnEstablishmentRoute } from '../middlewares/auth.middleware';
 
 import { MembershipRole } from '../models'
+import {TimeOffRequestController} from "../controllers/timeoff-request.controller";
+import {ConsoleNotificationService} from "../services/notification.service";
 
 const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
 const establishmentPictureUpload = multer(fileService.multerOptions).single('profilePicture');
@@ -31,6 +33,9 @@ export const createMyEstablishmentRouter = (
     const establishmentController = new EstablishmentController(establishmentService, membershipService);
     const serviceController = new ServiceController(serviceService, availabilityService);
     const bookingController = new BookingController(bookingService);
+
+    const notificationServiceInstance = new ConsoleNotificationService()
+    const timeOffRequestController = new TimeOffRequestController(notificationServiceInstance);
 
     // Appliquer le middleware d'ownership à toutes les routes de ce routeur
     router.use(ensureMembership([MembershipRole.ADMIN, MembershipRole.STAFF]));
@@ -61,6 +66,7 @@ export const createMyEstablishmentRouter = (
 
     router.get('/memberships', ensureMembership([MembershipRole.ADMIN]), establishmentController.getMemberships);
     router.get('/memberships/:membershipId', ensureAdminOrSelfForMembership, establishmentController.getMembershipById);
+    router.get('/memberships/:membershipId/time-off-requests', ensureCanListMemberTimeOffRequestsOnEstablishmentRoute, timeOffRequestController.listForMember);
     router.post('/memberships/invite', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, establishmentController.inviteMember);
 
 

@@ -1,7 +1,7 @@
 // src/services/establishment.service.ts
 import { ModelCtor, Op, FindOptions } from 'sequelize';
 import db from '../models'; // Garder pour accès facile aux autres modèles si besoin
-import Establishment, { EstablishmentAttributes } from '../models/Establishment';
+import Establishment, { EstablishmentAttributes, EstablishmentCreationAttributes } from '../models/Establishment';
 import User from '../models/User';
 import Role, { ROLES } from '../models/Role'; // Importer ROLES aussi
 import AvailabilityRule, { AvailabilityRuleAttributes } from '../models/AvailabilityRule';
@@ -28,6 +28,8 @@ import { fileService } from './file.service';
 import { AppError } from '../errors/app.errors';
 import { CountryNotFoundError } from "../errors/country.errors";
 import { isAfter, addYears } from 'date-fns';
+
+import { MembershipRole, MembershipStatus } from "../models";
 
 const ESTABLISHMENT_ADMIN_ROLE_NAME = ROLES.ESTABLISHMENT_ADMIN;
 
@@ -63,67 +65,84 @@ export class EstablishmentService {
      * Attribue le rôle ESTABLISHMENT_ADMIN si nécessaire.
      * Valide le format du SIRET et l'existence du pays.
      */
-    async createEstablishment(ownerId: number, data: CreateEstablishmentDto): Promise<Establishment> {
+    async createEstablishment(ownerId: number, data: CreateEstablishmentDto): Promise<EstablishmentAttributes> {
         const owner = await this.userModel.findByPk(ownerId, {
-            include: [{ model: this.roleModel, as: 'roles', attributes: ['name'] }] // Inclure les rôles pour vérification
+            include: [{ model: this.roleModel, as: 'roles', attributes: ['name'] }]
         });
-        if (!owner || !owner.is_active) {
-            throw new UserNotFoundError('Owner user not found or inactive.');
-        }
+        if (!owner || !owner.is_active) { throw new UserNotFoundError('Owner user not found or inactive.'); }
 
-        // Logique de limitation à 1 établissement par user (à confirmer si toujours d'actualité)
-        // const existingEstablishmentCheck = await this.establishmentModel.findOne({ where: { owner_id: ownerId }, attributes: ['id'] });
-        // if (existingEstablishmentCheck) {
-        //     throw new AlreadyOwnerError();
-        // }
-
-        // Vérifier l'unicité du SIRET
         const siretConflict = await this.establishmentModel.findOne({ where: { siret: data.siret }, attributes: ['id'] });
-        if (siretConflict) {
-            throw new DuplicateSiretError();
-        }
-
-        // Vérifier le format du SIRET
+        if (siretConflict) { throw new DuplicateSiretError(); }
         if (!/^\d{14}$/.test(data.siret)) { throw new InvalidSiretFormatError(); }
+
         const siren = data.siret.substring(0, 9);
 
-        // Vérifier et récupérer le code pays
-        const country = await this.countryModel.findOne({ where: { name: data.country_name }, attributes: ['code'] });
+        const country = await this.countryModel.findOne({
+            where: { name: data.country_name },
+            attributes: ['code', 'timezoneId'],
+            include: [{ model: db.Timezone, as: 'defaultTimezone', attributes: ['name'], required: false }]
+        });
+
         if (!country) { throw new CountryNotFoundError(data.country_name); }
         const countryCode = country.code;
 
-        // Créer l'établissement
-        const newEstablishment = await this.establishmentModel.create({
-            ...data, // Les données validées du DTO
-            siren: siren,
-            owner_id: ownerId,
-            country_code: countryCode, // Code pays récupéré
-            is_validated: false, // Non validé par défaut
-            // profile_picture_url est géré séparément via upload
-        });
-
-        // Attribuer le rôle ESTABLISHMENT_ADMIN si l'utilisateur ne l'a pas déjà
-        const hasAdminRole = owner.roles?.some(role => role.name === ESTABLISHMENT_ADMIN_ROLE_NAME);
-        if (!hasAdminRole) {
-            const adminRole = await this.roleModel.findOne({ where: { name: ESTABLISHMENT_ADMIN_ROLE_NAME } });
-            if (adminRole) {
-                await owner.addRole(adminRole);
-                console.log(`Role ${ESTABLISHMENT_ADMIN_ROLE_NAME} added to user ${ownerId}.`);
+        let establishmentTimezone = 'UTC';
+        if (country.defaultTimezone && country.defaultTimezone.name) {
+            establishmentTimezone = country.defaultTimezone.name;
+        } else if (country.timezoneId) {
+            const fallbackTimezone = await db.Timezone.findByPk(country.timezoneId, { attributes: ['name'] });
+            if (fallbackTimezone && fallbackTimezone.name) {
+                establishmentTimezone = fallbackTimezone.name;
             } else {
-                // Cas critique : le rôle n'existe pas en BDD
-                console.error(`FATAL: Role ${ESTABLISHMENT_ADMIN_ROLE_NAME} not found in database.`);
-                // On pourrait choisir de rollback la création de l'établissement ici si possible
-                // ou lancer une erreur 500
-                throw new AppError('RoleConfigurationError', 500, `Required role ${ESTABLISHMENT_ADMIN_ROLE_NAME} is missing.`);
+                console.warn(`Country ${country.code} has timezoneId ${country.timezoneId} but the timezone was not found. Defaulting to UTC for new establishment.`);
             }
+        } else {
+            console.warn(`Country ${country.code} has no default timezone associated. Defaulting to UTC for new establishment.`);
         }
 
-        // Re-fetch pour inclure les associations ou valeurs par défaut si nécessaire
-        // Utiliser findByPk pour être sûr d'avoir l'instance complète
-        return (await this.establishmentModel.findByPk(newEstablishment.id, {
-            // Inclure l'owner avec ses rôles pourrait être utile pour le DTO admin
-            include: [{ model: this.userModel, as: 'owner' }]
-        }))!;
+        const newEstablishmentData: EstablishmentCreationAttributes = {
+            ...data,
+            name: data.name,
+            siret: data.siret,
+            siren: siren,
+            owner_id: ownerId,
+            country_code: countryCode,
+            timezone: establishmentTimezone,
+            is_validated: false,
+        };
+
+        // Filtrer les champs non désirés du DTO avant de passer à create
+        // delete (newEstablishmentData as any).country_name; // Si country_name n'est pas un champ du modèle Establishment
+
+        const newEstablishment = await this.establishmentModel.create(newEstablishmentData);
+
+        const adminRole = await this.roleModel.findOne({ where: { name: 'ESTABLISHMENT_ADMIN' } }); // Supposant que ce rôle existe
+        if (!adminRole) {
+            console.warn("Role ESTABLISHMENT_ADMIN not found. Owner will not be made admin of the new establishment via Membership.");
+        } else {
+            // Créer un Membership
+            await db.Membership.create({
+                userId: ownerId,
+                establishmentId: newEstablishment.id,
+                role: MembershipRole.ADMIN,
+                status: MembershipStatus.ACTIVE,
+                joinedAt: new Date(),
+            });
+        }
+
+
+        const result = await this.establishmentModel.findByPk(newEstablishment.id, {
+            include: [
+                { model: this.userModel, as: 'owner' },
+                {
+                    model: this.countryModel,
+                    as: 'country', // Définir cette association sur Establishment
+                    include: [{ model: db.Timezone, as: 'defaultTimezone' }]
+                }
+            ]
+        });
+        if (!result) throw new EstablishmentNotFoundError('Failed to retrieve newly created establishment.'); // Devrait pas arriver
+        return result.get({ plain: true });
     }
 
     /**

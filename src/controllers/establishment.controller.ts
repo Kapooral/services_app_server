@@ -70,7 +70,7 @@ export class EstablishmentController {
             const createDto: CreateEstablishmentDto = CreateEstablishmentSchema.parse(req.body);
 
             const newEstablishment = await this.establishmentService.createEstablishment(req.user.id, createDto);
-            const outputDto = mapToAdminEstablishmentDto(newEstablishment.get({plain: true})); // Utiliser plain pour DTO
+            const outputDto = mapToAdminEstablishmentDto(newEstablishment); // Utiliser plain pour DTO
 
             res.status(201).json(outputDto);
         } catch (error) {
@@ -220,6 +220,106 @@ export class EstablishmentController {
         }
     }
 
+    // --- Méthodes pour Règles de Disponibilité (attachées à /me/establishments/:id) ---
+    async createMyRule(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            const createDto: CreateAvailabilityRuleDto = CreateAvailabilityRuleSchema.parse(req.body);
+            // Appeler le service avec l'ID de l'établissement
+            const newRule = await this.establishmentService.createAvailabilityRuleForId(establishmentId, createDto);
+            res.status(201).json(newRule.get({plain: true}));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async getMyRules(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            // Appeler le service avec l'ID de l'établissement
+            const rules = await this.establishmentService.getAvailabilityRulesForId(establishmentId);
+            res.status(200).json(rules.map(r => r.get({plain: true})));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async updateRule(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const ruleId = parseInt(req.params.ruleId, 10);
+            if (isNaN(ruleId)) throw new AppError('InvalidParameter', 400, 'Invalid rule ID.');
+
+            const updateDto: UpdateAvailabilityRuleDto = UpdateAvailabilityRuleSchema.parse(req.body);
+            const updatedRule = await this.establishmentService.updateAvailabilityRuleById(ruleId, updateDto);
+
+            res.status(200).json(updatedRule.get({ plain: true }));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async deleteRule(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const ruleId = parseInt(req.params.ruleId, 10);
+            if (isNaN(ruleId)) throw new AppError('InvalidParameter', 400, 'Invalid rule ID.');
+            await this.establishmentService.deleteAvailabilityRuleById(ruleId); // Nouvelle méthode service
+            res.status(204).send();
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // --- Méthodes pour Exceptions (Overrides) (attachées à /me/establishments/:id) ---
+    async createMyOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            const createDto: CreateAvailabilityOverrideDto = CreateAvailabilityOverrideSchema.parse(req.body);
+            // Appeler le service avec l'ID de l'établissement
+            const newOverride = await this.establishmentService.createAvailabilityOverrideForId(establishmentId, createDto);
+            res.status(201).json(newOverride.get({plain: true}));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async getMyOverrides(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            // Appeler le service avec l'ID de l'établissement
+            const overrides = await this.establishmentService.getAvailabilityOverridesForId(establishmentId);
+            res.status(200).json(overrides.map(o => o.get({plain: true})));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async updateOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const overrideId = parseInt(req.params.overrideId, 10);
+            if (isNaN(overrideId)) throw new AppError('InvalidParameter', 400, 'Invalid override ID.');
+            const updateDto: UpdateAvailabilityOverrideDto = UpdateAvailabilityOverrideSchema.parse(req.body);
+            const updatedOverride = await this.establishmentService.updateAvailabilityOverrideById(overrideId, updateDto); // Nouvelle méthode service
+            res.status(200).json(updatedOverride.get({plain: true}));
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async deleteOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const overrideId = parseInt(req.params.overrideId, 10);
+            if (isNaN(overrideId)) throw new AppError('InvalidParameter', 400, 'Invalid override ID.');
+            await this.establishmentService.deleteAvailabilityOverrideById(overrideId); // Nouvelle méthode service
+            res.status(204).send();
+        } catch (error) {
+            next(error);
+        }
+    }
+
     // POST /users/me/establishments/:establishmentId/memberships/invite
     async inviteMember(req: Request, res: Response, next: NextFunction): Promise<void> {
         if (!this.membershipService) {
@@ -257,112 +357,6 @@ export class EstablishmentController {
             else {
                 next(error);
             }
-        }
-    }
-
-
-    // --- Méthodes pour Règles de Disponibilité ---
-
-    // --- Méthodes pour Règles de Disponibilité (attachées à /me/establishments/:id) ---
-    async createMyRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
-            const establishmentId = parseInt(req.params.establishmentId, 10);
-            const createDto: CreateAvailabilityRuleDto = CreateAvailabilityRuleSchema.parse(req.body);
-            // Appeler le service avec l'ID de l'établissement
-            const newRule = await this.establishmentService.createAvailabilityRuleForId(establishmentId, createDto);
-            res.status(201).json(newRule.get({plain: true}));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    async getMyRules(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
-            const establishmentId = parseInt(req.params.establishmentId, 10);
-            // Appeler le service avec l'ID de l'établissement
-            const rules = await this.establishmentService.getAvailabilityRulesForId(establishmentId);
-            res.status(200).json(rules.map(r => r.get({plain: true})));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    // --- Méthodes pour Exceptions (Overrides) (attachées à /me/establishments/:id) ---
-    async createMyOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
-            const establishmentId = parseInt(req.params.establishmentId, 10);
-            const createDto: CreateAvailabilityOverrideDto = CreateAvailabilityOverrideSchema.parse(req.body);
-            // Appeler le service avec l'ID de l'établissement
-            const newOverride = await this.establishmentService.createAvailabilityOverrideForId(establishmentId, createDto);
-            res.status(201).json(newOverride.get({plain: true}));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    async getMyOverrides(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            // L'ownership est déjà vérifié par le middleware ensureOwnsEstablishment
-            const establishmentId = parseInt(req.params.establishmentId, 10);
-            // Appeler le service avec l'ID de l'établissement
-            const overrides = await this.establishmentService.getAvailabilityOverridesForId(establishmentId);
-            res.status(200).json(overrides.map(o => o.get({plain: true})));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    // --- Méthodes pour DELETE/PUT par ID de Règle/Override (appelées depuis /availability routes) ---
-    // Ces méthodes supposent que le middleware (requireRuleOwner/requireOverrideOwner) a déjà vérifié l'ownership
-    // PUT /api/availability/rules/:ruleId
-    async updateRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            const ruleId = parseInt(req.params.ruleId, 10);
-            if (isNaN(ruleId)) throw new AppError('InvalidParameter', 400, 'Invalid rule ID.');
-
-            const updateDto: UpdateAvailabilityRuleDto = UpdateAvailabilityRuleSchema.parse(req.body);
-            const updatedRule = await this.establishmentService.updateAvailabilityRuleById(ruleId, updateDto);
-
-            res.status(200).json(updatedRule.get({ plain: true }));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    async deleteRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            const ruleId = parseInt(req.params.ruleId, 10);
-            if (isNaN(ruleId)) throw new AppError('InvalidParameter', 400, 'Invalid rule ID.');
-            await this.establishmentService.deleteAvailabilityRuleById(ruleId); // Nouvelle méthode service
-            res.status(204).send();
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    async updateOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            const overrideId = parseInt(req.params.overrideId, 10);
-            if (isNaN(overrideId)) throw new AppError('InvalidParameter', 400, 'Invalid override ID.');
-            const updateDto: UpdateAvailabilityOverrideDto = UpdateAvailabilityOverrideSchema.parse(req.body);
-            const updatedOverride = await this.establishmentService.updateAvailabilityOverrideById(overrideId, updateDto); // Nouvelle méthode service
-            res.status(200).json(updatedOverride.get({plain: true}));
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    async deleteOverride(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            const overrideId = parseInt(req.params.overrideId, 10);
-            if (isNaN(overrideId)) throw new AppError('InvalidParameter', 400, 'Invalid override ID.');
-            await this.establishmentService.deleteAvailabilityOverrideById(overrideId); // Nouvelle méthode service
-            res.status(204).send();
-        } catch (error) {
-            next(error);
         }
     }
 

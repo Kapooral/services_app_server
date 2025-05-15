@@ -12,10 +12,12 @@ import AvailabilityRule, { initAvailabilityRule } from './AvailabilityRule';
 import AvailabilityOverride, { initAvailabilityOverride } from './AvailabilityOverride';
 import Booking, { initBooking } from './Booking';
 import Country, { initCountry } from './Country';
+import Timezone, { initTimezone } from './Timezone'
 
 import Membership, { initMembership, MembershipRole, MembershipStatus } from './Membership';
 import StaffAvailability, { initStaffAvailability } from './StaffAvailability';
 import ServiceMemberAssignment, { initServiceMemberAssignment } from './ServiceMemberAssignment';
+import TimeOffRequest, { initTimeOffRequest } from './TimeOffRequest';
 
 const UserModel = initUser(sequelizeInstance);
 const RefreshTokenModel = initRefreshToken(sequelizeInstance);
@@ -29,10 +31,12 @@ const AvailabilityOverrideModel = initAvailabilityOverride(sequelizeInstance);
 const BookingModel = initBooking(sequelizeInstance);
 
 const CountryModel = initCountry(sequelizeInstance);
+const TimezoneModel = initTimezone(sequelizeInstance);
 
 const MembershipModel = initMembership(sequelizeInstance);
 const StaffAvailabilityModel = initStaffAvailability(sequelizeInstance);
 const ServiceMemberAssignmentModel = initServiceMemberAssignment(sequelizeInstance);
+const TimeOffRequestModel = initTimeOffRequest(sequelizeInstance);
 
 const db = {
     sequelize: sequelizeInstance,
@@ -47,11 +51,28 @@ const db = {
     AvailabilityOverride: AvailabilityOverrideModel,
     Booking: BookingModel,
     Country: CountryModel,
+    Timezone: TimezoneModel,
     Membership: MembershipModel,
     StaffAvailability: StaffAvailabilityModel,
     ServiceMemberAssignment: ServiceMemberAssignmentModel,
+    TimeOffRequest: TimeOffRequestModel
 };
 
+// Country <-> Timezone (1 Timezone principal pour 1 Country, 1 Timezone peut être pour N Countries)
+// Un Pays (Country) appartient à un Fuseau Horaire (Timezone) principal/par défaut.
+CountryModel.belongsTo(TimezoneModel, {
+    foreignKey: 'timezoneId',
+    as: 'defaultTimezone',
+    constraints: true,
+    onDelete: 'SET NULL',
+});
+
+// Un Fuseau Horaire (Timezone) peut être le fuseau par défaut de plusieurs Pays (Countries).
+TimezoneModel.hasMany(CountryModel, {
+    foreignKey: 'timezoneId',
+    as: 'countriesWithThisDefaultTimezone',
+    constraints: true
+});
 
 // User <-> RefreshToken (1:N)
 UserModel.hasMany(RefreshTokenModel, { foreignKey: 'user_id', as: 'refreshTokens' });
@@ -120,6 +141,69 @@ MembershipModel.belongsToMany(ServiceModel, {
 // Membership <-> Booking (1:N pour le membre assigné)
 MembershipModel.hasMany(BookingModel, { foreignKey: 'assignedMembershipId', as: 'assignedBookings' });
 BookingModel.belongsTo(MembershipModel, { foreignKey: 'assignedMembershipId', as: 'assignedMember' });
+
+// TimeOffRequest <-> Membership (Requesting Member)
+// Une demande de congé appartient à un Membership (le demandeur)
+db.TimeOffRequest.belongsTo(db.Membership, {
+    foreignKey: 'membershipId', // Clé dans TimeOffRequest
+    as: 'requestingMember',     // Alias pour l'association
+    constraints: true,          // Assure que la FK est bien créée
+    onDelete: 'CASCADE'         // Important: si le membre est supprimé, ses demandes aussi
+});
+// Un Membership peut avoir plusieurs TimeOffRequests
+db.Membership.hasMany(db.TimeOffRequest, {
+    foreignKey: 'membershipId', // Clé dans TimeOffRequest
+    as: 'timeOffRequests',      // Alias
+    constraints: true
+});
+
+
+// TimeOffRequest <-> Establishment
+// Une demande de congé appartient à un Etablissement
+db.TimeOffRequest.belongsTo(db.Establishment, {
+    foreignKey: 'establishmentId',
+    as: 'establishment',
+    constraints: true,
+    onDelete: 'CASCADE'
+});
+// Un Etablissement peut avoir plusieurs TimeOffRequests
+db.Establishment.hasMany(db.TimeOffRequest, {
+    foreignKey: 'establishmentId',
+    as: 'timeOffRequests', // Peut être utile pour des admins voyant toutes les demandes
+    constraints: true
+});
+
+
+// TimeOffRequest <-> Membership (Processing Admin)
+// Une demande peut avoir été traitée par un Membership (admin)
+db.TimeOffRequest.belongsTo(db.Membership, {
+    foreignKey: 'processedByMembershipId',
+    as: 'processingAdmin',
+    constraints: true,
+    onDelete: 'SET NULL' // Si l'admin processeur est supprimé, on garde la trace de la demande
+});
+// Un Membership (admin) peut avoir traité plusieurs demandes
+db.Membership.hasMany(db.TimeOffRequest, {
+    foreignKey: 'processedByMembershipId',
+    as: 'processedTimeOffRequests',
+    constraints: true
+});
+
+
+// TimeOffRequest <-> Membership (Cancelling Actor)
+// Une demande peut avoir été annulée par un Membership (membre ou admin)
+db.TimeOffRequest.belongsTo(db.Membership, {
+    foreignKey: 'cancelledByMembershipId',
+    as: 'cancellingActor',
+    constraints: true,
+    onDelete: 'SET NULL' // Si l'acteur annulant est supprimé, on garde la trace
+});
+// Un Membership peut avoir annulé plusieurs demandes
+db.Membership.hasMany(db.TimeOffRequest, {
+    foreignKey: 'cancelledByMembershipId',
+    as: 'cancelledTimeOffRequests',
+    constraints: true
+});
 
 
 export default db;

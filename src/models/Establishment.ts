@@ -26,6 +26,7 @@ interface EstablishmentAttributes {
     siren: string;
     is_validated: boolean; // Pour la visibilité publique (post validation SIRET)
     owner_id: number; // FK vers User
+    timezone: string;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -55,6 +56,7 @@ class Establishment extends Model<EstablishmentAttributes, EstablishmentCreation
     public siren!: string;
     public is_validated!: boolean;
     public owner_id!: number; // FK vers User
+    public timezone!: string;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -114,7 +116,13 @@ export const initEstablishment = (sequelize: Sequelize) => {
                 references: { model: 'users', key: 'id' },
                 onUpdate: 'CASCADE',
                 onDelete: 'RESTRICT'
-            }
+            },
+            timezone: {
+                type: DataTypes.STRING(100), // Ex: 'Europe/Paris', 'America/New_York'
+                allowNull: false,
+                defaultValue: 'UTC', // Valeur par défaut sûre
+                comment: 'Timezone identifier (e.g., Europe/Paris) for the establishment.',
+            },
         },
         {
             sequelize,

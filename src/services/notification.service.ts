@@ -6,6 +6,7 @@ import { UserAttributes } from '../models/User';
 import { EstablishmentAttributes } from '../models/Establishment';
 import { ServiceAttributes } from '../models/Service';
 import { BookingAttributes, BookingStatus } from '../models/Booking';
+import { TimeOffRequestAttributes, TimeOffRequestStatus } from '../models/TimeOffRequest';
 
 const APP_NAME = process.env.APP_NAME || 'Your Application';
 const EMAIL_FROM_ADDRESS = process.env.MAILER_DEFAULT_FROM || `noreply@${process.env.MAILER_HOST?.split('.').slice(-2).join('.') || 'example.com'}`;
@@ -23,33 +24,17 @@ export interface INotificationService {
     sendInvitationEmail(toEmail: string, token: string, establishmentName: string, inviterName: string): Promise<void>;
     sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void>;
 
+    // --- Méthodes pour les demandes d'absence ---
+    sendTimeOffRequestSubmittedNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void>;
+    sendTimeOffRequestProcessedNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void>;
+    sendTimeOffRequestCancelledByMemberNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void>;
+    sendTimeOffRequestCancelledByAdminNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void>;
+
     // --- Méthodes pour les réservations ---
-    sendBookingConfirmationClient(
-        clientEmail: string,
-        booking: BookingAttributes,
-        service: ServiceAttributes,
-        establishment: EstablishmentAttributes
-    ): Promise<void>;
-
-    sendBookingNotificationAdmin(
-        adminEmail: string,
-        booking: BookingAttributes,
-        service: ServiceAttributes,
-        client: UserAttributes
-    ): Promise<void>;
-
-    sendBookingCancellationAdmin(
-        adminEmail: string,
-        booking: BookingAttributes,
-        service: ServiceAttributes,
-        client: UserAttributes
-    ): Promise<void>;
-
-    sendBookingStatusUpdateClient(
-        clientEmail: string,
-        booking: BookingAttributes,
-        service: ServiceAttributes
-    ): Promise<void>;
+    sendBookingConfirmationClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes, establishment: EstablishmentAttributes): Promise<void>;
+    sendBookingNotificationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes): Promise<void>;
+    sendBookingCancellationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes): Promise<void>;
+    sendBookingStatusUpdateClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes): Promise<void>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -361,6 +346,101 @@ export class ConsoleNotificationService implements INotificationService {
          `;
         await this.send({ to: adminEmail, subject, html });
     }
+
+    async sendTimeOffRequestSubmittedNotification(
+        adminEmail: string,
+        requestingUser: UserAttributes,
+        timeOffRequest: TimeOffRequestAttributes,
+        establishment: EstablishmentAttributes
+    ): Promise<void> {
+        const subject = `New Time Off Request from ${requestingUser.username} for ${establishment.name}`;
+        const detailsLink = `${FRONTEND_URL}/establishments/${establishment.id}/time-off-requests/${timeOffRequest.id}`; // Exemple de lien
+        const html = `
+            <h1>New Time Off Request</h1>
+            <p>Hello Admin,</p>
+            <p><strong>${requestingUser.username}</strong> has submitted a time off request for your establishment "<strong>${establishment.name}</strong>".</p>
+            <ul>
+                <li><strong>Type:</strong> ${timeOffRequest.type}</li>
+                <li><strong>Dates:</strong> ${timeOffRequest.startDate} to ${timeOffRequest.endDate}</li>
+                ${timeOffRequest.reason ? `<li><strong>Reason:</strong> ${timeOffRequest.reason}</li>` : ''}
+            </ul>
+            <p>Please review this request in the admin panel: <a href="${detailsLink}">View Request</a></p>
+            <br/>
+            <p>The ${APP_NAME} Team</p>
+        `;
+        // Logique d'envoi réelle (ou simulation pour ConsoleNotificationService)
+        console.log(`[NotificationService] SIMULATING Email to Admin ${adminEmail}: ${subject}`);
+        console.log(html.replace(/<[^>]*>?/gm, '')); // Log version texte simple
+        // await this.send({ to: adminEmail, subject, html }); // Décommenter pour un vrai envoi
+    }
+
+    async sendTimeOffRequestProcessedNotification(
+        memberEmail: string,
+        memberUser: UserAttributes,
+        timeOffRequest: TimeOffRequestAttributes,
+        establishment: EstablishmentAttributes
+    ): Promise<void> {
+        const statusText = timeOffRequest.status === TimeOffRequestStatus.APPROVED ? 'Approved' : 'Rejected';
+        const subject = `Your Time Off Request for ${establishment.name} has been ${statusText}`;
+        const detailsLink = `${FRONTEND_URL}/my-time-off/${timeOffRequest.id}`; // Exemple de lien
+
+        let html = `
+            <h1>Time Off Request ${statusText}</h1>
+            <p>Hello ${memberUser.username},</p>
+            <p>Your time off request for "<strong>${establishment.name}</strong>" from ${timeOffRequest.startDate} to ${timeOffRequest.endDate} has been <strong>${statusText}</strong>.</p>
+        `;
+        if (timeOffRequest.adminNotes) {
+            html += `<p><strong>Admin Notes:</strong> ${timeOffRequest.adminNotes}</p>`;
+        }
+        html += `<p>You can view the details here: <a href="${detailsLink}">View Request</a></p>
+                 <br/><p>The ${APP_NAME} Team</p>`;
+
+        console.log(`[NotificationService] SIMULATING Email to Member ${memberEmail}: ${subject}`);
+        console.log(html.replace(/<[^>]*>?/gm, ''));
+        // await this.send({ to: memberEmail, subject, html });
+    }
+
+    async sendTimeOffRequestCancelledByMemberNotification(
+        adminEmail: string,
+        requestingUser: UserAttributes,
+        timeOffRequest: TimeOffRequestAttributes,
+        establishment: EstablishmentAttributes
+    ): Promise<void> {
+        const subject = `Time Off Request Cancelled by ${requestingUser.username} for ${establishment.name}`;
+        const html = `
+            <h1>Time Off Request Cancelled</h1>
+            <p>Hello Admin,</p>
+            <p>The time off request submitted by <strong>${requestingUser.username}</strong> for "<strong>${establishment.name}</strong>" (originally for ${timeOffRequest.startDate} to ${timeOffRequest.endDate}) has been <strong>cancelled by the member</strong>.</p>
+            ${timeOffRequest.cancellationReason ? `<p><strong>Reason for cancellation:</strong> ${timeOffRequest.cancellationReason}</p>` : ''}
+            <p>No further action is required from your side regarding this specific request.</p>
+            <br/>
+            <p>The ${APP_NAME} Team</p>
+        `;
+        console.log(`[NotificationService] SIMULATING Email to Admin ${adminEmail}: ${subject}`);
+        console.log(html.replace(/<[^>]*>?/gm, ''));
+        // await this.send({ to: adminEmail, subject, html });
+    }
+
+    async sendTimeOffRequestCancelledByAdminNotification(
+        memberEmail: string,
+        memberUser: UserAttributes,
+        timeOffRequest: TimeOffRequestAttributes,
+        establishment: EstablishmentAttributes
+    ): Promise<void> {
+        const subject = `Your Time Off Request for ${establishment.name} has been Cancelled by Admin`;
+        const html = `
+            <h1>Time Off Request Cancelled by Admin</h1>
+            <p>Hello ${memberUser.username},</p>
+            <p>Your time off request for "<strong>${establishment.name}</strong>" from ${timeOffRequest.startDate} to ${timeOffRequest.endDate} has been <strong>cancelled by an administrator</strong>.</p>
+            ${timeOffRequest.cancellationReason ? `<p><strong>Reason for cancellation:</strong> ${timeOffRequest.cancellationReason}</p>` : ''}
+            <p>If you have questions, please contact your establishment administrator.</p>
+            <br/>
+            <p>The ${APP_NAME} Team</p>
+        `;
+        console.log(`[NotificationService] SIMULATING Email to Member ${memberEmail}: ${subject}`);
+        console.log(html.replace(/<[^>]*>?/gm, ''));
+        // await this.send({ to: memberEmail, subject, html });
+    }
 }
 
 export class NullNotificationService implements INotificationService {
@@ -377,4 +457,9 @@ export class NullNotificationService implements INotificationService {
     async sendBookingStatusUpdateClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes): Promise<void> { /* no-op */ }
     async sendInvitationEmail(toEmail: string, token: string, establishmentName: string, inviterName: string): Promise<void> { /* no-op */ }
     async sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void> { /* no-op */ }
+
+    async sendTimeOffRequestSubmittedNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
+    async sendTimeOffRequestProcessedNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
+    async sendTimeOffRequestCancelledByMemberNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
+    async sendTimeOffRequestCancelledByAdminNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
 }

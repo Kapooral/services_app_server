@@ -11,9 +11,15 @@ import { EstablishmentNotFoundError } from '../errors/establishment.errors';
 import { AuthenticationError, AuthorizationError } from '../errors/auth.errors';
 import { MembershipNotFoundError } from '../errors/membership.errors';
 import { ServiceNotFoundError, ServiceOwnershipError } from '../errors/service.errors';
-import { AvailabilityRuleNotFoundError, AvailabilityOverrideNotFoundError, AvailabilityOwnershipError } from '../errors/availability.errors';
+import {
+    AvailabilityRuleNotFoundError,
+    AvailabilityOverrideNotFoundError,
+    AvailabilityOwnershipError,
+    TimeOffRequestNotFoundError
+} from '../errors/availability.errors';
 
 import Membership, { MembershipAttributes, MembershipRole, MembershipStatus } from '../models/Membership';
+import TimeOffRequest, { TimeOffRequestAttributes } from '../models/TimeOffRequest';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'YOUR_SUPER_SECRET_KEY';
 const SUPER_ADMIN = process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN';
@@ -303,6 +309,7 @@ export const ensureAdminOrSelfForMembership = async (req: Request, res: Response
         next(error);
     }
 };
+
 // Middleware pour vérifier si l'utilisateur est ADMIN de l'établissement auquel APPARTIENT le membership cible
 // Utilisé pour PATCH /memberships/:membershipId et DELETE /memberships/:membershipId
 export const ensureAdminOfTargetMembership = async (req: Request, res: Response, next: NextFunction) => {
@@ -355,15 +362,219 @@ export const ensureAdminOfTargetMembership = async (req: Request, res: Response,
     }
 };
 
-// Ajouter targetMembership à l'interface Request si on l'attache
-declare global {
-    namespace Express {
-        interface Request {
-            // ... (user, membership existants) ...
-            targetMembership?: MembershipAttributes; // <-- AJOUTER
+/**
+ * Loads the target membership specified by a route parameter,
+ * then loads the actor's membership within the target membership's establishment.
+ * Attaches `req.targetMembership` and `req.actorMembershipInTargetContext`.
+ *
+ * @param membershipIdParamName - The name of the route parameter for the target membership ID.
+ */
+export const loadAndVerifyMembershipContext = (membershipIdParamName: string) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+        if (!req.user) {
+            // requireAuth devrait déjà avoir été appelé
+            return next(new AppError('AuthenticationError', 401, 'Authentication required.'));
         }
+        try {
+            const targetMembershipId = parseInt(req.params[membershipIdParamName], 10);
+            if (isNaN(targetMembershipId)) {
+                return next(new AppError('InvalidInput', 400, `Invalid target membership ID parameter: ${membershipIdParamName}.`));
+            }
+
+            const targetMembership = await db.Membership.findByPk(targetMembershipId);
+            if (!targetMembership) {
+                return next(new MembershipNotFoundError(`Target membership with ID ${targetMembershipId} not found.`));
+            }
+            req.targetMembership = targetMembership.get({ plain: true });
+
+            // Maintenant, trouver le membership de l'acteur pour l'établissement de la CIBLE
+            const actorMembershipInTargetContext = await db.Membership.findOne({
+                where: {
+                    userId: req.user.id,
+                    establishmentId: targetMembership.establishmentId,
+                    status: MembershipStatus.ACTIVE,
+                },
+            });
+
+            if (!actorMembershipInTargetContext) {
+                // Gérer le cas SUPER_ADMIN séparément s'il doit avoir accès malgré l'absence de membership contextuel
+                if (req.user.roles.includes(process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN')) {
+                    console.log(`User ${req.user.id} is SUPER_ADMIN, proceeding without direct membership in target establishment ${targetMembership.establishmentId}.`);
+                    // On pourrait attacher un actorMembershipInTargetContext "virtuel" ou laisser undefined et gérer dans le middleware suivant.
+                    // Pour l'instant, on ne l'attache pas, le middleware suivant devra gérer le cas SUPER_ADMIN via req.user.roles.
+                } else {
+                    return next(new AppError('Forbidden', 403, `You are not an active member of the establishment (ID: ${targetMembership.establishmentId}) to which the target resource belongs.`));
+                }
+            }
+            req.actorMembershipInTargetContext = actorMembershipInTargetContext?.get({ plain: true });
+            next();
+        } catch (error) {
+            next(error);
+        }
+    };
+};
+
+/**
+ * Checks access to a resource primarily owned/associated with `req.targetMembership`.
+ * Must run AFTER `loadAndVerifyMembershipContext`.
+ * Relies on `req.actorMembershipInTargetContext` (for role in context) and `req.targetMembership`.
+ *
+ * @param allowedActorRolesInContext - Roles the actor can have in the target's establishment context.
+ * @param allowSelf - If true, allows access if the actor IS the target membership.
+ */
+export const ensureAccessToMembershipResource = (
+    allowedActorRolesInContext?: MembershipRole[],
+    allowSelf: boolean = false
+) => {
+    return (req: Request, res: Response, next: NextFunction) => {
+        if (!req.user) return next(new AppError('AuthenticationError', 401, 'Authentication required.'));
+        if (!req.targetMembership) return next(new AppError('MiddlewareError', 500, 'Target membership not loaded. Ensure loadAndVerifyMembershipContext runs first.'));
+
+        // SUPER_ADMIN bypass
+        if (req.user.roles.includes(process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN')) {
+            return next();
+        }
+
+        if (!req.actorMembershipInTargetContext) {
+            // Ce cas ne devrait pas arriver si SUPER_ADMIN est géré et que l'acteur normal a un membership.
+            return next(new AppError('Forbidden', 403, 'Access denied: No valid membership context for actor.'));
+        }
+
+        if (allowSelf && req.actorMembershipInTargetContext.id === req.targetMembership.id) {
+            return next();
+        }
+
+        if (allowedActorRolesInContext && allowedActorRolesInContext.includes(req.actorMembershipInTargetContext.role)) {
+            return next();
+        }
+
+        return next(new AppError('Forbidden', 403, 'You do not have sufficient permissions for this resource.'));
+    };
+};
+
+
+/**
+ * Middleware for listing TimeOffRequests under /establishments/:establishmentId/memberships/:membershipId/time-off-requests
+ * Assumes `req.membership` (actor's membership for :establishmentId) is attached by `ensureMembership` on the parent router.
+ */
+export const ensureCanListMemberTimeOffRequestsOnEstablishmentRoute = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        // req.membership est celui de l'acteur pour req.params.establishmentId (attaché par le ensureMembership du router parent)
+        if (!req.membership) return next(new AppError('MiddlewareError', 500, 'Actor membership not found. Ensure `ensureMembership` runs before.'));
+
+        const targetMembershipId = parseInt(req.params.membershipId, 10);
+        const establishmentIdFromRoute = parseInt(req.params.establishmentId, 10);
+
+        if (isNaN(targetMembershipId) || isNaN(establishmentIdFromRoute)) {
+            return next(new AppError('InvalidInput', 400, 'Invalid target membership or establishment ID.'));
+        }
+
+        // SUPER_ADMIN bypass
+        if (req.user && req.user.roles.includes(process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN')) {
+            // Vérifier quand même que le targetMembership existe dans l'establishment
+            const targetMember = await db.Membership.findOne({ where: { id: targetMembershipId, establishmentId: establishmentIdFromRoute }, attributes: ['id'] });
+            if (!targetMember) return next(new MembershipNotFoundError(`Target membership ID ${targetMembershipId} not found in establishment ${establishmentIdFromRoute}.`));
+            return next();
+        }
+
+        if (req.membership.role === MembershipRole.ADMIN) {
+            // Admin de l'établissement peut lister. Vérifions que le membre cible est dans le même établissement.
+            const targetMember = await db.Membership.findOne({
+                where: { id: targetMembershipId, establishmentId: req.membership.establishmentId },
+                attributes: ['id']
+            });
+            if (!targetMember) {
+                return next(new MembershipNotFoundError(`Target membership ID ${targetMembershipId} not found in your establishment.`));
+            }
+            return next();
+        }
+
+        // Si STAFF, il ne peut voir que ses propres demandes.
+        // req.membership.id est l'ID du membership de l'acteur.
+        // targetMembershipId est l'ID du membership dont on veut lister les demandes.
+        if (req.membership.id === targetMembershipId) {
+            return next();
+        }
+
+        return next(new AppError('Forbidden', 403, 'You can only list your own time off requests or you must be an admin.'));
+    } catch (error) {
+        next(error);
     }
-}
+};
+
+
+/**
+ * Loads a TimeOffRequest and ensures the actor has access.
+ * Must run AFTER `loadAndVerifyMembershipContext` and `ensureAccessToMembershipResource` (or similar logic).
+ * Relies on `req.actorMembershipInTargetContext` (actor's role in the request's establishment)
+ * and `req.targetMembership` (the membership to which the TimeOffRequest belongs).
+ *
+ * @param requestIdParamName - Route parameter name for TimeOffRequest ID.
+ * @param allowedActorRolesInContext - Roles the actor can have in the request's establishment context to manage it.
+ * @param allowSelfOnResource - If true, allows access if the actor IS the one who made the TimeOffRequest.
+ */
+export const loadTimeOffRequestAndVerifyAccessDetails = (
+    requestIdParamName: string,
+    allowedActorRolesInContext?: MembershipRole[], // Roles de l'acteur DANS L'ÉTABLISSEMENT de la demande
+    allowSelfOnResource: boolean = false // Si l'acteur est le demandeur lui-même
+) => {
+    return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            // Contexte déjà établi par:
+            // 1. requireAuth (req.user)
+            // 2. loadAndVerifyMembershipContext (req.targetMembership, req.actorMembershipInTargetContext)
+            // 3. ensureAccessToMembershipResource (validation de base pour accéder aux ressources de targetMembership)
+            if (!req.user) return next(new AppError('AuthenticationError', 401, 'Authentication required.'));
+            if (!req.targetMembership || !req.actorMembershipInTargetContext && !req.user.roles.includes(process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN')) {
+                return next(new AppError('MiddlewareError', 500, 'Membership context not properly loaded.'));
+            }
+
+            const requestId = parseInt(req.params[requestIdParamName], 10);
+            if (isNaN(requestId)) {
+                return next(new AppError('InvalidInput', 400, `Invalid time off request ID parameter: ${requestIdParamName}.`));
+            }
+
+            const timeOffRequest = await db.TimeOffRequest.findByPk(requestId);
+            if (!timeOffRequest) {
+                return next(new TimeOffRequestNotFoundError());
+            }
+
+            // Assurer que la demande de congé appartient bien au req.targetMembership (qui vient de l'URL /:membershipId/)
+            if (timeOffRequest.membershipId !== req.targetMembership.id) {
+                return next(new AppError('Forbidden', 403, 'Time off request does not belong to the specified member path.'));
+            }
+            req.targetTimeOffRequest = timeOffRequest.get({ plain: true });
+
+            // SUPER_ADMIN bypass
+            if (req.user.roles.includes(process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN')) {
+                return next();
+            }
+
+            // Si pas SUPER_ADMIN, req.actorMembershipInTargetContext doit exister
+            if (!req.actorMembershipInTargetContext) {
+                return next(new AppError('Forbidden', 403, 'Access denied: No valid membership context for actor for this request.'));
+            }
+
+
+            if (allowSelfOnResource && req.actorMembershipInTargetContext.id === req.targetTimeOffRequest.membershipId) {
+                return next();
+            }
+
+            if (allowedActorRolesInContext && allowedActorRolesInContext.includes(req.actorMembershipInTargetContext.role)) {
+                return next();
+            }
+
+            return next(new AppError('Forbidden', 403, 'You do not have permission to perform this action on this time off request.'));
+
+        } catch (error) {
+            next(error);
+        }
+    };
+};
 
 export const requireServiceOwner = async (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) { return next(new AuthenticationError('Authentication required.')); }
