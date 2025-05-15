@@ -1,4 +1,4 @@
-// src/controllers/TimeOffRequestController.ts
+// src/controllers/timeoff-request.controller.ts
 import { NextFunction, Request, Response } from 'express';
 import { TimeOffRequestService } from '../services/timeoff-request.service';
 
@@ -6,11 +6,14 @@ import {
     CreateTimeOffRequestDtoSchema,
     ProcessTimeOffRequestDtoSchema,
     CancelTimeOffRequestDtoSchema,
-    ListTimeOffRequestsQueryDtoSchema
+    ListTimeOffRequestsQueryDtoSchema,
+    ListAllTimeOffRequestsForEstablishmentQueryDtoSchema
 } from '../dtos/timeoff-request.validation';
 
 import { MembershipAttributes } from '../models/Membership';
 import { INotificationService } from '../services/notification.service';
+
+import { AppError } from '../errors/app.errors';
 
 // Supposons une factory ou une instance globale du NotificationService
 // import notificationServiceInstance from '../services/notification.service.instance'; // Exemple
@@ -65,6 +68,33 @@ export class TimeOffRequestController {
             const result = await this.timeOffRequestService.listTimeOffRequestsForMember(
                 establishmentId,
                 targetMembershipId,
+                validatedQuery
+            );
+            res.status(200).json(result);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * @route GET /api/users/me/establishments/:establishmentId/time-off-requests
+     * @description List all time off requests for a specific establishment. Admin only.
+     */
+    public listForEstablishment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            // Le middleware ensureMembership(['ADMIN']) aura déjà validé que l'acteur est un admin
+            // de cet établissement et attaché req.membership.
+            const establishmentId = parseInt(req.params.establishmentId, 10);
+            // Pas besoin de vérifier isNaN ici si on fait confiance au typage de la route et au middleware.
+            // Ou, si on veut être très prudent :
+            if (isNaN(establishmentId)) {
+                throw new AppError('InvalidInput', 400, 'Establishment ID must be a valid number.');
+            }
+
+            const validatedQuery = ListAllTimeOffRequestsForEstablishmentQueryDtoSchema.parse(req.query);
+
+            const result = await this.timeOffRequestService.listTimeOffRequestsForEstablishment(
+                establishmentId,
                 validatedQuery
             );
             res.status(200).json(result);

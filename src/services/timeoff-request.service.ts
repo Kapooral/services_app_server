@@ -9,7 +9,8 @@ import {
     CreateTimeOffRequestDto,
     ListTimeOffRequestsQueryDto,
     ProcessTimeOffRequestDto,
-    CancelTimeOffRequestDto
+    CancelTimeOffRequestDto,
+    ListAllTimeOffRequestsForEstablishmentQueryDto
 } from '../dtos/timeoff-request.validation';
 import { PaginationDto, createPaginationResult } from '../dtos/pagination.validation';
 import { AppError } from '../errors/app.errors';
@@ -176,6 +177,87 @@ export class TimeOffRequestService {
         });
 
         const totalItems = Array.isArray(dbResult.count) ? (dbResult.count[0]?.count ?? 0) : dbResult.count;
+        return createPaginationResult<TimeOffRequestAttributes>(
+            dbResult.rows.map(r => r.get({ plain: true })),
+            { totalItems: totalItems, currentPage: page, itemsPerPage: limit }
+        );
+    }
+
+    /**
+     * Lists all time off requests for a specific establishment, with pagination and filtering.
+     * Only for admins. Access is verified by middleware.
+     */
+    async listTimeOffRequestsForEstablishment(
+        establishmentId: number,
+        queryDto: ListAllTimeOffRequestsForEstablishmentQueryDto
+    ): Promise<PaginationDto<TimeOffRequestAttributes>> {
+        const {
+            page = 1,
+            limit = 10,
+            status,
+            type,
+            membershipId: filterMembershipId,
+            dateRangeStart,
+            dateRangeEnd,
+            sortBy = 'createdAt',
+            sortOrder = 'desc'
+        } = queryDto;
+
+        const offset = (page - 1) * limit;
+
+        if (dateRangeStart && dateRangeEnd && new Date(dateRangeEnd) < new Date(dateRangeStart)) {
+            throw new AppError('InvalidInput', 400, 'Date range end cannot be before date range start.');
+        }
+
+        const whereConditions: WhereOptions<TimeOffRequestAttributes> = {
+            establishmentId: establishmentId,
+        };
+
+        if (status) { whereConditions.status = status; }
+        if (type) { whereConditions.type = type; }
+        if (filterMembershipId) { whereConditions.membershipId = filterMembershipId; }
+
+        if (dateRangeStart && dateRangeEnd) {
+            whereConditions.startDate = { [Op.lte]: dateRangeEnd };
+            whereConditions.endDate = { [Op.gte]: dateRangeStart };
+        }
+
+        const dbResult = await this.timeOffRequestModel.findAndCountAll({
+            where: whereConditions,
+            include: [
+                {
+                    model: db.Membership,
+                    as: 'requestingMember',
+                    attributes: ['id'],
+                    include: [{ model: db.User, as: 'user', attributes: ['id', 'username', 'profile_picture'], required: false }]
+                },
+                {
+                    model: db.Membership,
+                    as: 'processingAdmin',
+                    required: false,
+                    attributes: ['id'],
+                    include: [{ model: db.User, as: 'user', attributes: ['id', 'username'], required: false }]
+                },
+                {
+                    model: db.Membership,
+                    as: 'cancellingActor',
+                    required: false,
+                    attributes: ['id'],
+                    include: [{ model: db.User, as: 'user', attributes: ['id', 'username'], required: false }]
+                }
+            ],
+            limit,
+            offset,
+            order: [[sortBy, sortOrder.toUpperCase() as 'ASC' | 'DESC']]
+        });
+
+        // Pour dbResult.count, si c'est un array (group by), il faut sommer. Sinon, c'est un nombre.
+        // Ici, pas de group by explicite dans la requête principale, donc count devrait être un nombre.
+        const totalItems = Array.isArray(dbResult.count)
+            ? dbResult.count.reduce((sum, item: any) => sum + (item.count || 0), 0)
+            : dbResult.count;
+
+
         return createPaginationResult<TimeOffRequestAttributes>(
             dbResult.rows.map(r => r.get({ plain: true })),
             { totalItems: totalItems, currentPage: page, itemsPerPage: limit }

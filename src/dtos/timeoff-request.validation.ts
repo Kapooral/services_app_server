@@ -86,3 +86,39 @@ export const ListTimeOffRequestsQueryDtoSchema = z.object({
     // filterByMembershipId: z.coerce.number().int().positive().optional(),
 });
 export type ListTimeOffRequestsQueryDto = z.infer<typeof ListTimeOffRequestsQueryDtoSchema>;
+
+// === DTO pour les paramètres de requête de listage de toutes les demandes d'un établissement ===
+export const ListAllTimeOffRequestsForEstablishmentQueryDtoSchema = z.object({
+    page: z.coerce.number().int().positive().optional().default(1),
+    limit: z.coerce.number().int().positive().max(100).optional().default(10),
+    status: z.nativeEnum(TimeOffRequestStatus).optional(),
+    type: z.nativeEnum(TimeOffRequestType).optional(),
+    membershipId: z.coerce.number().int().positive().optional(), // Pour filtrer par un membre spécifique
+    dateRangeStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateRangeStart must be in YYYY-MM-DD format.").optional(), // YYYY-MM-DD
+    dateRangeEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateRangeEnd must be in YYYY-MM-DD format.").optional(),   // YYYY-MM-DD
+    sortBy: z.enum([
+        'createdAt',
+        'updatedAt',
+        'startDate',
+        'endDate',
+        'status',
+        'type'
+    ]).optional().default('createdAt'),
+    sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+}).refine(data => {
+    if (data.dateRangeStart && !data.dateRangeEnd) {
+        return false;
+    }
+    if (!data.dateRangeStart && data.dateRangeEnd) {
+        return false;
+    }
+    if (data.dateRangeStart && data.dateRangeEnd && new Date(data.dateRangeEnd) < new Date(data.dateRangeStart)) {
+        return false;
+    }
+    return true;
+}, {
+    message: "If one of dateRangeStart or dateRangeEnd is provided, the other must also be provided, and dateRangeEnd must not be before dateRangeStart.",
+    path: ["dateRangeStart", "dateRangeEnd"],
+});
+
+export type ListAllTimeOffRequestsForEstablishmentQueryDto = z.infer<typeof ListAllTimeOffRequestsForEstablishmentQueryDtoSchema>;

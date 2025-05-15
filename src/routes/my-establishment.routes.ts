@@ -69,6 +69,7 @@ export const createMyEstablishmentRouter = (
     router.get('/memberships/:membershipId/time-off-requests', ensureCanListMemberTimeOffRequestsOnEstablishmentRoute, timeOffRequestController.listForMember);
     router.post('/memberships/invite', ensureMembership([MembershipRole.ADMIN]), verifyCsrfToken, establishmentController.inviteMember);
 
+    router.get('/time-off-requests', ensureMembership([MembershipRole.ADMIN]), timeOffRequestController.listForEstablishment);
 
     return router;
 };
