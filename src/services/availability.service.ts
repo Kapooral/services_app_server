@@ -89,7 +89,7 @@ export class AvailabilityService {
     private cleanRRuleOptions(
         originalRRuleString: string,
         parsedOptions: Partial<RRuleOptions>, // Options issues de RRule.parseString()
-        staffRuleContext?: { id: number | string; effectiveStartDate: string | Date; },
+        staffRuleContext?: { id: number | string; effectiveStartDate: string; },
         establishmentTimezoneForContext?: string
     ): RRuleOptions | null {
         const logPrefix = `[AVAIL_SVC_CLEAN_OPTS_R${staffRuleContext?.id}]`;
@@ -149,9 +149,10 @@ export class AvailabilityService {
 
         // Fallbacks pour dtstart si toujours non défini
         if (!(processedDtStart instanceof Date) && staffRuleContext && staffRuleContext.effectiveStartDate && establishmentTimezoneForContext) {
-            const effStartDateStr = staffRuleContext.effectiveStartDate instanceof Date
-                ? moment(staffRuleContext.effectiveStartDate).format('YYYY-MM-DD')
-                : staffRuleContext.effectiveStartDate;
+            // staffRuleContext.effectiveStartDate est maintenant de type string (YYYY-MM-DD)
+            // donc plus besoin de la vérification instanceof Date ni du formatage avec moment().format()
+            const effStartDateStr = staffRuleContext.effectiveStartDate; // C'est déjà une chaîne YYYY-MM-DD
+
             processedDtStart = moment.tz(effStartDateStr, 'YYYY-MM-DD', establishmentTimezoneForContext).startOf('day').toDate();
             console.log(`${logPrefix} dtstart: Fallback to effectiveStartDate of rule (${effStartDateStr} in ${establishmentTimezoneForContext}): ${processedDtStart?.toISOString()}`);
         }
@@ -331,9 +332,8 @@ export class AvailabilityService {
                     rruleOptionsFromStr,
                     {
                         id: staffRule.id,
-                        effectiveStartDate: staffRule.effectiveStartDate instanceof Date
-                            ? moment(staffRule.effectiveStartDate).format('YYYY-MM-DD')
-                            : staffRule.effectiveStartDate
+                        // staffRule.effectiveStartDate est déjà une string YYYY-MM-DD
+                        effectiveStartDate: staffRule.effectiveStartDate
                     },
                     establishmentTimezone
                 );

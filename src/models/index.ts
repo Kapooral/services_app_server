@@ -19,6 +19,15 @@ import StaffAvailability, { initStaffAvailability } from './StaffAvailability';
 import ServiceMemberAssignment, { initServiceMemberAssignment } from './ServiceMemberAssignment';
 import TimeOffRequest, { initTimeOffRequest } from './TimeOffRequest';
 
+
+import {
+    ShiftTemplate as ShiftTemplateModelClass, // Renommer pour éviter conflit avec l'export du type
+    ShiftTemplateRule as ShiftTemplateRuleModelClass, // Renommer
+    initShiftTemplate,
+    initShiftTemplateRule,
+    associateShiftTemplateModels
+} from './ShiftTemplate';
+
 const UserModel = initUser(sequelizeInstance);
 const RefreshTokenModel = initRefreshToken(sequelizeInstance);
 const RoleModel = initRole(sequelizeInstance);
@@ -38,6 +47,10 @@ const StaffAvailabilityModel = initStaffAvailability(sequelizeInstance);
 const ServiceMemberAssignmentModel = initServiceMemberAssignment(sequelizeInstance);
 const TimeOffRequestModel = initTimeOffRequest(sequelizeInstance);
 
+
+const ShiftTemplateModel = initShiftTemplate(sequelizeInstance);
+const ShiftTemplateRuleModel = initShiftTemplateRule(sequelizeInstance);
+
 const db = {
     sequelize: sequelizeInstance,
     Sequelize,
@@ -55,7 +68,9 @@ const db = {
     Membership: MembershipModel,
     StaffAvailability: StaffAvailabilityModel,
     ServiceMemberAssignment: ServiceMemberAssignmentModel,
-    TimeOffRequest: TimeOffRequestModel
+    TimeOffRequest: TimeOffRequestModel,
+    ShiftTemplate: ShiftTemplateModel,
+    ShiftTemplateRule: ShiftTemplateRuleModel,
 };
 
 // Country <-> Timezone (1 Timezone principal pour 1 Country, 1 Timezone peut être pour N Countries)
@@ -204,6 +219,18 @@ db.Membership.hasMany(db.TimeOffRequest, {
     as: 'cancelledTimeOffRequests',
     constraints: true
 });
+
+
+// ShiftTemplate <-> Establishment
+db.Establishment.hasMany(db.ShiftTemplate, { foreignKey: 'establishmentId', as: 'shiftTemplates' });
+db.ShiftTemplate.belongsTo(db.Establishment, { foreignKey: 'establishmentId', as: 'establishment' });
+
+// ShiftTemplate <-> Membership (Creator)
+db.Membership.hasMany(db.ShiftTemplate, { foreignKey: 'createdByMembershipId', as: 'createdShiftTemplates' });
+db.ShiftTemplate.belongsTo(db.Membership, { foreignKey: 'createdByMembershipId', as: 'creator' });
+
+// ShiftTemplate <-> ShiftTemplateRule (appel de la fonction d'association dédiée)
+associateShiftTemplateModels(db.ShiftTemplate, db.ShiftTemplateRule);
 
 
 export default db;

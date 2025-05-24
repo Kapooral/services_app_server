@@ -371,3 +371,144 @@ Simplifier la création de plannings pour l'Admin en lui permettant de créer de
 *   **Validation des `rruleString` :** Idéalement, valider la syntaxe des `rruleString` dès la création/mise à jour du `ShiftTemplateRule` en utilisant `rrule.js` côté serveur pour éviter les erreurs lors de l'application.
 ```
 ---
+
+
+Ok NexusAI, merci pour le prompt précédent.
+
+Voici la **réponse exacte** que j'ai obtenu de **CodeArchitect-TS** en utilisant le prompt que tu as fourni :
+
+```response :
+C'est une excellente initiative de vouloir définir clairement le périmètre fonctionnel avant de se lancer dans l'implémentation. En m'appuyant sur ma compréhension des documents fournis et l'objectif de gestion de planning pour les membres Staff, voici une proposition de fonctionnalités pertinentes pour le module "Gestion de planning des Membres" :
+
+---
+
+**Fonctionnalités Proposées pour le Module "Gestion de Planning des Membres Staff"**
+
+**A. Fonctionnalités Centrées sur le Membre Staff (Autonomie et Visibilité)**
+
+1.  **Tableau de Bord du Planning Personnel (Vue Staff)**
+    *   **Objectif :** Fournir au membre Staff une vue claire et interactive de son propre emploi du temps.
+    *   **Description :** Affichage calendaire (jour, semaine, mois) de ses blocs de travail définis (via `StaffAvailability`), de ses réservations assignées (`Booking`), et de ses périodes d'indisponibilité (congés, absences).
+    *   **Bénéficiaire :** Membre Staff.
+    *   **Interactions Clés :**
+        *   Lecture des `StaffAvailability` où `membershipId` est celui du membre connecté.
+        *   Lecture des `Booking` où `assignedMembershipId` est celui du membre connecté.
+        *   Interaction avec le futur système de `TimeOffRequest` (voir point 3).
+
+2.  **Gestion Intuitive de ses Disponibilités Personnelles (Extension de `StaffAvailability`)**
+    *   **Objectif :** Simplifier la manière dont un membre Staff définit et met à jour ses horaires de travail réguliers ou ses indisponibilités récurrentes.
+    *   **Description :** Interface utilisateur dédiée et conviviale (potentiellement plus visuelle que la gestion brute de `rrule`) pour créer, modifier, et supprimer ses propres enregistrements `StaffAvailability`.
+    *   **Bénéficiaire :** Membre Staff.
+    *   **Interactions Clés :**
+        *   CRUD sur le modèle `StaffAvailability` pour ses propres enregistrements (sécurisé par `ensureMembershipAccess`).
+        *   Impacte directement les calculs de `AvailabilityService` pour ce membre et pour les services auxquels il est assigné.
+
+3.  **Soumission et Suivi des Demandes de Congés/Absences**
+    *   **Objectif :** Permettre aux membres Staff de demander formellement des périodes d'indisponibilité (congés payés, maladie, absence non planifiée) qui nécessitent une approbation.
+    *   **Description :** Un système où le membre Staff peut soumettre une demande avec dates, type d'absence, et motif. Il peut ensuite suivre le statut de sa demande (En attente, Approuvée, Rejetée).
+    *   **Bénéficiaires :** Membre Staff (initiateur), Admin de l'établissement (approbateur).
+    *   **Interactions Clés :**
+        *   Nécessite un nouveau modèle (ex: `TimeOffRequest`) lié au `Membership`, avec des champs comme `startDate`, `endDate`, `type`, `reason`, `status`.
+        *   À l'approbation par un Admin, une règle `StaffAvailability` (avec `isWorking=false`) pourrait être automatiquement créée pour le membre.
+        *   Notification à l'Admin lors de la soumission, et au membre Staff lors du changement de statut.
+
+4.  **Notifications Personnalisées liées au Planning**
+    *   **Objectif :** Informer activement les membres Staff des événements importants concernant leur planning.
+    *   **Description :** Envoi de notifications (in-app, et potentiellement email via `NotificationService`) pour :
+        *   Nouvelle réservation assignée.
+        *   Modification ou annulation d'une réservation assignée.
+        *   Approbation ou rejet d'une demande de congé.
+        *   Modification de ses `StaffAvailability` par un Admin.
+    *   **Bénéficiaire :** Membre Staff.
+    *   **Interactions Clés :** Déclenché par des opérations CRUD sur `Booking` (si `assignedMembershipId` concerné), `TimeOffRequest`, ou `StaffAvailability`.
+
+**B. Fonctionnalités Centrées sur l'Admin de l'Établissement (Supervision et Optimisation)**
+
+5.  **Vue d'Ensemble du Planning de l'Équipe (Vue Admin)**
+    *   **Objectif :** Offrir à l'Admin une vision globale et centralisée des plannings de tous les membres Staff, facilitant la coordination et l'identification des disponibilités.
+    *   **Description :** Affichage calendaire (jour, semaine, mois) permettant de superposer ou de visualiser côte à côte les plannings des membres. Inclut les blocs de travail, les réservations assignées, et les absences approuvées. Possibilité de filtrer par membre(s) ou par service(s).
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :**
+        *   Lecture des `StaffAvailability` de tous les membres de l'établissement.
+        *   Lecture des `Booking` de l'établissement, avec indication du membre assigné.
+        *   Lecture des `TimeOffRequest` approuvées.
+
+6.  **Gestion Centralisée des Disponibilités des Membres (par Admin)**
+    *   **Objectif :** Permettre à l'Admin de définir ou de modifier directement les `StaffAvailability` (horaires de travail, indisponibilités) pour n'importe quel membre Staff de son établissement.
+    *   **Description :** L'Admin peut intervenir sur les `StaffAvailability` de ses membres, par exemple pour initialiser un planning, corriger une erreur, ou gérer une absence imprévue.
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :**
+        *   CRUD sur le modèle `StaffAvailability` pour tous les membres de son établissement (sécurisé par `ensureMembershipAccess` ou un middleware similaire pour Admin).
+        *   Notification au membre Staff concerné en cas de modification par l'Admin.
+
+7.  **Gestion des Demandes de Congés/Absences (Approbation)**
+    *   **Objectif :** Fournir à l'Admin une interface pour examiner et traiter les demandes de congés soumises par les membres Staff.
+    *   **Description :** Liste des `TimeOffRequest` en attente, avec la possibilité pour l'Admin de les approuver ou de les rejeter (avec un motif optionnel).
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :**
+        *   Mise à jour du statut des `TimeOffRequest`.
+        *   Si approbation, potentielle création/modification automatique d'une `StaffAvailability` (`isWorking=false`).
+        *   Notification au membre Staff du résultat.
+
+8.  **Outils d'Assignation et de Réassignation des Réservations**
+    *   **Objectif :** Faciliter l'attribution des réservations aux membres Staff compétents et disponibles.
+    *   **Description :** L'Admin peut visualiser les réservations non assignées ou modifier l'assignation existante. Le système pourrait suggérer des membres éligibles (assignés au service, disponibles selon leur `StaffAvailability` et leurs réservations existantes).
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :**
+        *   Modification du champ `assignedMembershipId` sur le modèle `Booking`.
+        *   Nécessite de vérifier :
+            *   L'association du membre au `Service` (via `ServiceMemberAssignment`).
+            *   La disponibilité réelle du membre au moment de la réservation (via `AvailabilityService`, en considérant ses `StaffAvailability` et autres `Booking`s).
+        *   Notification au membre Staff concerné (ancien et nouveau si réassignation).
+
+9.  **Détection et Signalement de Conflits de Planning**
+    *   **Objectif :** Aider l'Admin à identifier proactivement les problèmes dans le planning.
+    *   **Description :** Le système pourrait signaler visuellement dans la vue planning de l'Admin les conflits potentiels :
+        *   Un membre Staff assigné à deux réservations simultanées.
+        *   Une réservation assignée en dehors des heures de travail définies d'un membre (si l'assignation manuelle a outrepassé les règles de `StaffAvailability`).
+        *   Un service avec une forte demande mais peu de Staff disponible.
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :** Analyse croisée des `Booking`s, `StaffAvailability`, et `ServiceMemberAssignment`.
+
+**C. Fonctionnalités Avancées et Améliorations Expérience Utilisateur**
+
+10. **Définition de Modèles d'Horaires/Shifts Réutilisables**
+    *   **Objectif :** Simplifier la création de plannings pour l'Admin, surtout si l'établissement fonctionne avec des roulements ou des horaires types.
+    *   **Description :** L'Admin peut créer des "modèles de shift" (ex: "Shift Matin Lundi-Vendredi 9h-13h", "Shift Soir Week-end 17h-22h") qui sont essentiellement des ensembles préconfigurés de règles `rrule` et de durées. Il peut ensuite appliquer ces modèles à un ou plusieurs membres Staff pour une période donnée, générant ainsi automatiquement les `StaffAvailability` correspondantes.
+    *   **Bénéficiaire :** Admin de l'établissement.
+    *   **Interactions Clés :**
+        *   Nécessite un nouveau modèle (ex: `ShiftTemplate`).
+        *   L'application d'un template à un membre déclencherait la création de plusieurs enregistrements `StaffAvailability`.
+
+11. **Export du Planning (ICS / PDF)**
+    *   **Objectif :** Permettre aux utilisateurs (Staff et Admin) d'exporter leur planning ou celui de l'équipe dans des formats standards.
+    *   **Description :**
+        *   Pour le membre Staff : un bouton pour exporter son planning personnel au format ICS (compatible avec Google Calendar, Outlook, etc.).
+        *   Pour l'Admin : un bouton pour exporter le planning de l'équipe (filtré) au format ICS ou PDF pour impression/partage.
+    *   **Bénéficiaires :** Membre Staff, Admin de l'établissement.
+    *   **Interactions Clés :** Génération de fichiers ICS ou PDF à partir des données de planning.
+
+12. **Journal des Modifications du Planning (Audit Simplifié)**
+    *   **Objectif :** Fournir une traçabilité basique des changements importants apportés au planning d'un membre.
+    *   **Description :** Lorsqu'une `StaffAvailability` d'un membre est modifiée par un Admin, ou lorsqu'une réservation lui est assignée/réassignée, un log simple pourrait être enregistré et visible (par ex. dans les détails du membre ou une section "Historique").
+    *   **Bénéficiaires :** Admin de l'établissement, Membre Staff (pour comprendre les changements).
+    *   **Interactions Clés :** Enregistrement d'événements lors de modifications de `StaffAvailability` ou `Booking.assignedMembershipId`.
+
+---
+
+Cette liste couvre un éventail de fonctionnalités, des plus fondamentales aux plus avancées. Certaines, comme la détection de conflits ou les modèles de shifts, apporteraient une valeur ajoutée significative mais représentent une complexité d'implémentation plus élevée.
+
+Nous pourrons discuter de la priorisation de ces fonctionnalités pour définir un périmètre réaliste pour une première version du module. Je suis prêt à passer à l'étape suivante lorsque vous le souhaitez.
+```
+---
+
+**Mon feedback** :
+Très bien, nous partageons cette vision. Dans un premier temps, nous allons nous focaliser sur le point suivant : **B. Fonctionnalités Centrées sur l'Admin de l'Établissement (Supervision et Optimisation)**. Nous travaillerons sur le backend pendant qu'une autre équipe se focalisera sur le frontend.
+
+Nous développerons le module étape par étape en prenant en compte le workflow (au minimum) de mise à jour suivant :
+**adaptation fichier model -> adaptation fichier dtos -> adaptation fichier service -> adaptation fichier contrôleur -> adaptation fichier route -> adaptation middlewares -> adaptation fichier erreur**.
+
+Avant de commencer à écrire du code, nous voulons que tu définisse un plan d'implémentation fonctionnel et technique, couvrant tous les aspects du point **B. Fonctionnalités Centrées sur l'Admin de l'Établissement (Supervision et Optimisation)**, qui nous servira de plan d'action. Ce plan doit être extrêmement accessible, pouvant être suivi étape par étape. Une fois que nous aurons valider ce plan, nous pourrons commencer à les implémenter.
+---
+
+Pour toi **NexusAI** : Peux-tu me fournir le prochain prompt optimisé basé sur ces éléments ?
