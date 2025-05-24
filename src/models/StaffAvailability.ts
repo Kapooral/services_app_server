@@ -1,4 +1,4 @@
-import { Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin } from 'sequelize';
+import { Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin, BelongsToSetAssociationMixin } from 'sequelize';
 import Membership from './Membership';
 
 // Type pour les détails du conflit non bloquant
@@ -20,6 +20,8 @@ interface StaffAvailabilityAttributes {
     appliedShiftTemplateRuleId?: number | null;
     createdByMembershipId?: number | null;
     potential_conflict_details?: PotentialConflictDetailItem[] | null;
+    computed_min_start_utc: Date;
+    computed_max_end_utc: Date | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -31,6 +33,7 @@ interface StaffAvailabilityCreationAttributes extends Optional<StaffAvailability
     'appliedShiftTemplateRuleId' |
     'createdByMembershipId' |
     'potential_conflict_details' |
+    'computed_max_end_utc' |
     'createdAt' |
     'updatedAt'> {}
 
@@ -46,13 +49,15 @@ class StaffAvailability extends Model<StaffAvailabilityAttributes, StaffAvailabi
     public appliedShiftTemplateRuleId!: number | null;
     public createdByMembershipId!: number | null;
     public potential_conflict_details!: PotentialConflictDetailItem[] | null;
+    public computed_min_start_utc!: Date;
+    public computed_max_end_utc!: Date | null;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
 
     // --- Mixins ---
     public getMembership!: BelongsToGetAssociationMixin<Membership>;
-    public setMembership!: BelongsToGetAssociationMixin<Membership>;
+    public setMembership!: BelongsToSetAssociationMixin<Membership, number>;
 
     // --- Associations ---
     public readonly membership?: Membership;
@@ -108,6 +113,18 @@ export const initStaffAvailability = (sequelize: Sequelize) => {
                 field: 'potential_conflict_details',
                 comment: 'Stores an array of details if this availability has non-blocking conflicts (e.g., with PENDING time off requests).',
             },
+            computed_min_start_utc: {
+                type: DataTypes.DATE,
+                allowNull: false,
+                field: 'computed_min_start_utc',
+                comment: 'UTC datetime of the earliest possible start of this availability rule.'
+            },
+            computed_max_end_utc: {
+                type: DataTypes.DATE,
+                allowNull: true,
+                field: 'computed_max_end_utc',
+                comment: 'UTC datetime of the latest possible end of this availability rule (considers rrule UNTIL/COUNT and effectiveEndDate).'
+            },
         },
         {
             sequelize,
@@ -117,7 +134,9 @@ export const initStaffAvailability = (sequelize: Sequelize) => {
             underscored: true,
             indexes: [
                 { fields: ['membership_id'] },
-                { fields: ['effective_start_date', 'effective_end_date'] } // Pour requêtes par intervalle
+                { fields: ['effective_start_date', 'effective_end_date'] },
+                { fields: ['membership_id', 'computed_min_start_utc', 'computed_max_end_utc'] },
+                { fields: ['membership_id', 'is_working', 'computed_min_start_utc', 'computed_max_end_utc'] },
             ]
         }
     );

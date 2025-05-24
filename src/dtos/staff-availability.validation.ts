@@ -94,6 +94,8 @@ export const StaffAvailabilityOutputDtoSchema = z.object({
     appliedShiftTemplateRuleId: z.number().int().positive().nullable().optional(),
     createdByMembershipId: z.number().int().positive().nullable().optional(),
     potential_conflict_details: z.array(PotentialConflictDetailItemSchema).nullable().optional(),
+    computed_min_start_utc: z.coerce.date(),
+    computed_max_end_utc: z.coerce.date().nullable(),
     createdAt: z.coerce.date(),
     updatedAt: z.coerce.date(),
 });
@@ -125,7 +127,7 @@ export const ListStaffAvailabilitiesQueryDtoSchema = z.object({
     if (data.filterRangeStart && data.filterRangeEnd && moment(data.filterRangeEnd).isBefore(moment(data.filterRangeStart))) return false;
     return true;
 }, {
-    message: "If one of filterRangeStart or filterRangeEnd is provided, the other must also be, and end must not be before start.",
+    message: "If providing a date range filter, both start and end dates are required, and end date must not be before start date.",
     path: ["filterRangeStart", "filterRangeEnd"],
 });
 export type ListStaffAvailabilitiesQueryDto = z.infer<typeof ListStaffAvailabilitiesQueryDtoSchema>;

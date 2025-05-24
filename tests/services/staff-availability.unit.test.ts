@@ -281,8 +281,7 @@ describe('StaffAvailabilityService', () => {
             mockOverlapDetectionService, // Injection du service mocké
             db.StaffAvailability as any,
             db.Membership as any,
-            db.Establishment as any,
-            db.TimeOffRequest as any
+            db.Establishment as any
         );
     });
 
@@ -332,6 +331,10 @@ describe('StaffAvailabilityService', () => {
                 description: mockCreateDto.description ?? null,
                 appliedShiftTemplateRuleId: null,
                 createdByMembershipId: mockActorAdminMembership.id,
+                computed_min_start_utc: new Date('2024-07-01T09:00:00Z'),
+                computed_max_end_utc: mockCreateDto.effectiveEndDate
+                    ? new Date(moment.tz(mockCreateDto.effectiveEndDate, 'YYYY-MM-DD', MOCK_DEFAULT_TIMEZONE).endOf('day').utc().format())
+                    : null,
                 potential_conflict_details: null,
                 createdAt: new Date(),
                 updatedAt: new Date(),
@@ -364,18 +367,27 @@ describe('StaffAvailabilityService', () => {
                 createdByMembershipId: mockActorAdminMembership.id,
                 appliedShiftTemplateRuleId: null,
                 potential_conflict_details: null,
+                computed_min_start_utc: expect.any(Date),
+                computed_max_end_utc: expect.anything(),
             };
             const createdInstanceDataForResult: StaffAvailabilityAttributes = {
                 id: MOCK_STAFF_AVAILABILITY_ID_1,
-                ...expectedDataForCreateCall,
-                effectiveStartDate: expectedDataForCreateCall.effectiveStartDate!,
-                effectiveEndDate: expectedDataForCreateCall.effectiveEndDate ?? null,
-                description: expectedDataForCreateCall.description ?? null,
+                rruleString: specificDto.rruleString,
+                durationMinutes: specificDto.durationMinutes,
+                isWorking: specificDto.isWorking,
+                effectiveStartDate: specificDto.effectiveStartDate,
+                effectiveEndDate: specificDto.effectiveEndDate ?? null,
+                description: specificDto.description ?? null,
+                membershipId: MOCK_TARGET_MEMBERSHIP_ID,
+                createdByMembershipId: mockActorAdminMembership.id,
+                appliedShiftTemplateRuleId: null,
                 potential_conflict_details: null,
+                computed_min_start_utc: new Date(specificDto.effectiveStartDate + 'T09:00:00Z'),
+                computed_max_end_utc: specificDto.effectiveEndDate ? new Date(specificDto.effectiveEndDate + 'T23:59:59Z') : null,
                 createdAt: expect.any(Date) as Date,
                 updatedAt: expect.any(Date) as Date,
             };
-            // Reconfigurer le mock de create pour ce test spécifique si les données retournées changent
+
             (db.StaffAvailability.create as jest.Mock).mockResolvedValue(
                 mockSequelizeModelInstance<StaffAvailabilityAttributes>(createdInstanceDataForResult)
             );
@@ -397,8 +409,25 @@ describe('StaffAvailabilityService', () => {
                 durationMinutes: 60,
                 isWorking: true,
                 effectiveStartDate: '2024-08-01',
+                // description et effectiveEndDate sont omis
             };
             const expectedCreatePayload = {
+                rruleString: dtoWithoutOptionals.rruleString,
+                durationMinutes: dtoWithoutOptionals.durationMinutes,
+                isWorking: dtoWithoutOptionals.isWorking,
+                effectiveStartDate: dtoWithoutOptionals.effectiveStartDate,
+                effectiveEndDate: null, // Le service met null si undefined
+                description: null,      // Le service met null si undefined
+                membershipId: MOCK_TARGET_MEMBERSHIP_ID,
+                createdByMembershipId: mockActorAdminMembership.id,
+                appliedShiftTemplateRuleId: null,
+                potential_conflict_details: null,
+                computed_min_start_utc: expect.any(Date),
+                computed_max_end_utc: expect.anything(), // Peut être Date ou null
+            };
+            // L'instance retournée doit avoir les valeurs calculées
+            const createdInstanceData: StaffAvailabilityAttributes = {
+                id: MOCK_STAFF_AVAILABILITY_ID_2,
                 rruleString: dtoWithoutOptionals.rruleString,
                 durationMinutes: dtoWithoutOptionals.durationMinutes,
                 isWorking: dtoWithoutOptionals.isWorking,
@@ -409,17 +438,15 @@ describe('StaffAvailabilityService', () => {
                 createdByMembershipId: mockActorAdminMembership.id,
                 appliedShiftTemplateRuleId: null,
                 potential_conflict_details: null,
-            };
-            const createdInstanceData: StaffAvailabilityAttributes = {
-                id: MOCK_STAFF_AVAILABILITY_ID_2,
-                ...expectedCreatePayload,
+                computed_min_start_utc: moment.tz('2024-08-01T10:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).utc().toDate(),
+                computed_max_end_utc: moment.tz('2024-08-01T10:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).add(60, 'minutes').utc().toDate(),
                 createdAt: expect.any(Date) as Date,
                 updatedAt: expect.any(Date) as Date,
             };
             (db.StaffAvailability.create as jest.Mock).mockResolvedValue(
                 mockSequelizeModelInstance<StaffAvailabilityAttributes>(createdInstanceData)
             );
-            mockConflictCheck(false, undefined, null); // Assurer pas de conflit
+            mockConflictCheck(false, undefined, null);
 
             const result = await staffAvailabilityService.createStaffAvailability(
                 dtoWithoutOptionals,
@@ -431,6 +458,8 @@ describe('StaffAvailabilityService', () => {
             expect(result.description).toBeNull();
             expect(result.effectiveEndDate).toBeNull();
             expect(result.potential_conflict_details).toBeNull();
+            expect(result.computed_min_start_utc).toEqual(createdInstanceData.computed_min_start_utc);
+            expect(result.computed_max_end_utc).toEqual(createdInstanceData.computed_max_end_utc);
         });
 
         it('Func - Création avec isWorking = false', async () => {
@@ -500,21 +529,23 @@ describe('StaffAvailabilityService', () => {
         // ou on la simule en faisant échouer le test si une erreur de conflit N'EST PAS levée.
         // Pour rendre cela testable, il faudrait que le service fasse un appel (ex: findAll) pour les règles existantes.
         const setupConflictingRuleTest = (existingRulePartialAttrs: Partial<StaffAvailabilityAttributes>) => {
-            // CORRECTION: S'assurer que tous les champs requis par StaffAvailabilityAttributes sont là
             const fullExistingRuleData: StaffAvailabilityAttributes = {
-                id: MOCK_STAFF_AVAILABILITY_ID_2, // Utiliser un ID défini
+                id: MOCK_STAFF_AVAILABILITY_ID_2,
                 membershipId: MOCK_TARGET_MEMBERSHIP_ID,
-                rruleString: 'DTSTART=20240701T100000;FREQ=DAILY;COUNT=1', // Valeur par défaut
+                rruleString: 'DTSTART=20240701T100000;FREQ=DAILY;COUNT=1',
                 durationMinutes: 60,
                 isWorking: true,
-                effectiveStartDate: '2024-07-01', // Doit être une chaîne
-                effectiveEndDate: '2024-07-01',   // Doit être une chaîne ou null
+                effectiveStartDate: '2024-07-01',
+                effectiveEndDate: '2024-07-01',
                 description: 'Existing rule for conflict test',
                 appliedShiftTemplateRuleId: null,
                 createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                computed_min_start_utc: new Date('2024-07-01T10:00:00Z'),
+                computed_max_end_utc: new Date('2024-07-01T11:00:00Z'),
+                potential_conflict_details: null,
                 createdAt: new Date('2024-01-01'),
                 updatedAt: new Date('2024-01-01'),
-                ...existingRulePartialAttrs, // Surcharger avec les attributs spécifiques au test
+                ...existingRulePartialAttrs,
             };
             (db.StaffAvailability.findAll as jest.Mock).mockResolvedValue([
                 mockSequelizeModelInstance<StaffAvailabilityAttributes>(fullExistingRuleData)
@@ -524,27 +555,78 @@ describe('StaffAvailabilityService', () => {
         // [CHEV] Tests de chevauchement pour Edge Cases (s'attendent à réussir car pas de conflit)
         it('[CHEV] Edge - Création se terminant EXACTEMENT quand une autre commence (Pas de Chevauchement)', async () => {
             mockConflictCheck(false, undefined, null); // Simuler aucun conflit
-            // Le reste de la configuration du test (DTO, etc.) reste comme avant pour ce scénario
-            const newRuleDto: CreateStaffAvailabilityDto = { /* ... comme dans le test original ... */
+            const newRuleDto: CreateStaffAvailabilityDto = {
                 rruleString: `DTSTART=20240701T090000;FREQ=DAILY;COUNT=1`, durationMinutes: 60,
-                effectiveStartDate: '2024-07-01', effectiveEndDate: '2024-07-01', isWorking: true
+                effectiveStartDate: '2024-07-01', effectiveEndDate: '2024-07-01', isWorking: true,
+                description: 'Ends just before other'
             };
-            await expect(staffAvailabilityService.createStaffAvailability(newRuleDto, mockActorAdminMembership, MOCK_TARGET_MEMBERSHIP_ID))
-                .resolves.toBeDefined();
+
+            const createdData: StaffAvailabilityAttributes = {
+                id: 1234, // Un ID de test unique
+                membershipId: MOCK_TARGET_MEMBERSHIP_ID,
+                rruleString: newRuleDto.rruleString,
+                durationMinutes: newRuleDto.durationMinutes,
+                isWorking: newRuleDto.isWorking,
+                effectiveStartDate: newRuleDto.effectiveStartDate,
+                effectiveEndDate: newRuleDto.effectiveEndDate ?? null,
+                description: newRuleDto.description ?? null,
+                appliedShiftTemplateRuleId: null,
+                createdByMembershipId: mockActorAdminMembership.id,
+                potential_conflict_details: null,
+                computed_min_start_utc: moment.tz(newRuleDto.effectiveStartDate + 'T09:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).utc().toDate(), // Exemple basé sur rruleString
+                computed_max_end_utc: moment.tz(newRuleDto.effectiveStartDate + 'T09:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).add(newRuleDto.durationMinutes, 'minutes').utc().toDate(), // Exemple
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+            (db.StaffAvailability.create as jest.Mock).mockResolvedValue(mockSequelizeModelInstance<StaffAvailabilityAttributes>(createdData));
+
+            const result = await staffAvailabilityService.createStaffAvailability(newRuleDto, mockActorAdminMembership, MOCK_TARGET_MEMBERSHIP_ID);
+
             expect(mockOverlapDetectionService.checkForConflicts).toHaveBeenCalled();
             expect(db.StaffAvailability.create).toHaveBeenCalled();
+            expect(result).toEqual(expect.objectContaining({
+                potential_conflict_details: null,
+                computed_min_start_utc: createdData.computed_min_start_utc,
+                computed_max_end_utc: createdData.computed_max_end_utc,
+            }));
         });
 
         it('[CHEV] Edge - Création commençant EXACTEMENT quand une autre se termine (Pas de Chevauchement)', async () => {
             mockConflictCheck(false, undefined, null); // Simuler aucun conflit
-            const newRuleDto: CreateStaffAvailabilityDto = { /* ... comme dans le test original ... */
+            const newRuleDto: CreateStaffAvailabilityDto = {
                 rruleString: `DTSTART=20240701T100000;FREQ=DAILY;COUNT=1`, durationMinutes: 60,
-                effectiveStartDate: '2024-07-01', effectiveEndDate: '2024-07-01', isWorking: true
+                effectiveStartDate: '2024-07-01', effectiveEndDate: '2024-07-01', isWorking: true,
+                description: 'Starts just after other'
             };
-            await expect(staffAvailabilityService.createStaffAvailability(newRuleDto, mockActorAdminMembership, MOCK_TARGET_MEMBERSHIP_ID))
-                .resolves.toBeDefined();
+
+            const createdData: StaffAvailabilityAttributes = {
+                id: 1235, // Un ID de test unique
+                membershipId: MOCK_TARGET_MEMBERSHIP_ID,
+                rruleString: newRuleDto.rruleString,
+                durationMinutes: newRuleDto.durationMinutes,
+                isWorking: newRuleDto.isWorking,
+                effectiveStartDate: newRuleDto.effectiveStartDate,
+                effectiveEndDate: newRuleDto.effectiveEndDate ?? null,
+                description: newRuleDto.description ?? null,
+                appliedShiftTemplateRuleId: null,
+                createdByMembershipId: mockActorAdminMembership.id,
+                potential_conflict_details: null,
+                computed_min_start_utc: moment.tz(newRuleDto.effectiveStartDate + 'T10:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).utc().toDate(), // Exemple basé sur rruleString
+                computed_max_end_utc: moment.tz(newRuleDto.effectiveStartDate + 'T10:00:00', 'YYYY-MM-DDTHH:mm:ss', MOCK_DEFAULT_TIMEZONE).add(newRuleDto.durationMinutes, 'minutes').utc().toDate(), // Exemple
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+            (db.StaffAvailability.create as jest.Mock).mockResolvedValue(mockSequelizeModelInstance<StaffAvailabilityAttributes>(createdData));
+
+            const result = await staffAvailabilityService.createStaffAvailability(newRuleDto, mockActorAdminMembership, MOCK_TARGET_MEMBERSHIP_ID);
+
             expect(mockOverlapDetectionService.checkForConflicts).toHaveBeenCalled();
             expect(db.StaffAvailability.create).toHaveBeenCalled();
+            expect(result).toEqual(expect.objectContaining({
+                potential_conflict_details: null,
+                computed_min_start_utc: createdData.computed_min_start_utc,
+                computed_max_end_utc: createdData.computed_max_end_utc,
+            }));
         });
 
 
@@ -571,7 +653,7 @@ describe('StaffAvailabilityService', () => {
 
         testBlockingConflictScenario(
             'Nouvelle règle commence pendant existante',
-            { // Fournir un DTO complet ici
+            { // DTO complet
                 rruleString: 'DTSTART=20240701T100000;FREQ=DAILY;COUNT=1',
                 durationMinutes: 120,
                 isWorking: true,
@@ -673,7 +755,7 @@ describe('StaffAvailabilityService', () => {
 
             // L'instance que le mock de create doit retourner, incluant les détails du conflit
             const createdInstanceWithConflictDetails: StaffAvailabilityAttributes = {
-                id: MOCK_STAFF_AVAILABILITY_ID_1, // ou un autre ID approprié
+                id: MOCK_STAFF_AVAILABILITY_ID_1,
                 rruleString: dtoForNonBlocking.rruleString,
                 durationMinutes: dtoForNonBlocking.durationMinutes,
                 isWorking: dtoForNonBlocking.isWorking,
@@ -683,7 +765,9 @@ describe('StaffAvailabilityService', () => {
                 membershipId: MOCK_TARGET_MEMBERSHIP_ID,
                 createdByMembershipId: mockActorAdminMembership.id,
                 appliedShiftTemplateRuleId: null,
-                potential_conflict_details: potentialConflict, // <<<< IMPORTANT ICI
+                potential_conflict_details: potentialConflict,
+                computed_min_start_utc: new Date(dtoForNonBlocking.effectiveStartDate + 'T09:00:00Z'), // Exemple
+                computed_max_end_utc: dtoForNonBlocking.effectiveEndDate ? new Date(dtoForNonBlocking.effectiveEndDate + 'T23:59:59Z') : null, // Exemple
                 createdAt: expect.any(Date) as Date,
                 updatedAt: expect.any(Date) as Date,
             };
@@ -726,11 +810,14 @@ describe('StaffAvailabilityService', () => {
                 rruleString: 'FREQ=DAILY;DTSTART=20240801T100000;COUNT=1',
                 durationMinutes: 180,
                 isWorking: true,
-                effectiveStartDate: '2024-08-01', // Chaîne, comme dans l'interface
+                effectiveStartDate: '2024-08-01',
                 effectiveEndDate: null,
                 description: 'Existing rule for get test',
-                appliedShiftTemplateRuleId: 42, // Pour tester ce cas
-                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, // Pour tester ce cas
+                appliedShiftTemplateRuleId: 42,
+                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                computed_min_start_utc: new Date('2024-08-01T10:00:00Z'), // Exemple
+                computed_max_end_utc: new Date('2024-08-01T13:00:00Z'),   // Exemple
+                potential_conflict_details: null,
                 createdAt: new Date('2024-08-01T00:00:00Z'),
                 updatedAt: new Date('2024-08-01T00:00:00Z'),
             };
@@ -801,6 +888,7 @@ describe('StaffAvailabilityService', () => {
                 ...mockExistingAvailabilityData,
                 description: null,
                 effectiveEndDate: null,
+                computed_max_end_utc: null
             };
             const specificInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(specificData);
             (specificInstance as any).membership = (mockAvailabilityInstance as any).membership; // Garder le même membership
@@ -864,36 +952,62 @@ describe('StaffAvailabilityService', () => {
         // Utiliser Partial ici pour permettre des assignations incomplètes dans les tests spécifiques
         // Le service appliquera ses propres valeurs par défaut.
         let queryDtoForTest: Partial<ZodListStaffAvailabilitiesQueryDto>;
-        let mockTargetMemberInstance: ReturnType<typeof mockSequelizeModelInstance<MembershipAttributes>>;
+        let mockTargetMemberInstance: jest.Mocked<MembershipReal & MembershipAttributes & { establishment: jest.Mocked<EstablishmentReal & EstablishmentAttributes> }>;
         let mockAvailabilitiesData: StaffAvailabilityAttributes[];
         let mockAvailabilityInstances: Array<ReturnType<typeof mockSequelizeModelInstance<StaffAvailabilityAttributes>>>;
 
         const MOCK_TARGET_ID_FOR_LIST = MOCK_TARGET_MEMBERSHIP_ID;
 
         beforeEach(() => {
-            // DTO par défaut pour les tests qui ne spécifient pas de queryDto particulier
-            // Ces valeurs correspondent aux défauts de Zod ET du service
-            queryDtoForTest = {};
+            queryDtoForTest = {}; // Initialisation par défaut
 
-            mockTargetMemberInstance = mockSequelizeModelInstance<MembershipAttributes>({
+            const mockEstablishmentDataForList = mockSequelizeModelInstance<EstablishmentAttributes>({
+                id: MOCK_ESTABLISHMENT_ID,
+                name: 'Test Establishment for List',
+                timezone: MOCK_DEFAULT_TIMEZONE,
+                address_line1: '123 Test St', city: 'TestCity', postal_code: '12345', country_name: 'Testland', country_code: 'TS',
+                siret: '11122233300001', siren: '111222333', owner_id: MOCK_ADMIN_USER_ID, is_validated: true,
+                createdAt: new Date(), updatedAt: new Date(),
+            }) as jest.Mocked<EstablishmentReal & EstablishmentAttributes>; // Cast pour inclure les méthodes mockées
+
+            // Étape 1: Créer l'instance de base avec les MembershipAttributes
+            const baseMockTargetMember = mockSequelizeModelInstance<MembershipAttributes>({
                 ...mockTargetMembershipAttributes,
                 id: MOCK_TARGET_ID_FOR_LIST,
-            });
+                establishmentId: mockEstablishmentDataForList.id,
+            }) as jest.Mocked<MembershipReal & MembershipAttributes>; // Cast initial
+
+            // Étape 2: Attacher l'association mockée 'establishment'
+            // TypeScript a besoin d'un cast pour ajouter une propriété non définie dans MembershipAttributes directement.
+            (baseMockTargetMember as any).establishment = mockEstablishmentDataForList;
+
+            // Étape 3: Assigner à mockTargetMemberInstance avec le type final
+            mockTargetMemberInstance = baseMockTargetMember as jest.Mocked<MembershipReal & MembershipAttributes & { establishment: jest.Mocked<EstablishmentReal & EstablishmentAttributes> }>;
+
             (db.Membership.findOne as jest.Mock).mockResolvedValue(mockTargetMemberInstance);
 
+            // S'assurer que mockAvailabilitiesData inclut les champs computed_*
             mockAvailabilitiesData = [
                 {
                     id: MOCK_STAFF_AVAILABILITY_ID_1, membershipId: MOCK_TARGET_ID_FOR_LIST,
                     rruleString: 'FREQ=DAILY;DTSTART=20240901T090000;COUNT=1', durationMinutes: 120, isWorking: true,
                     effectiveStartDate: '2024-09-01', effectiveEndDate: null, description: 'Avail 1 (Sept)',
                     appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                    computed_min_start_utc: moment.tz('2024-09-01T09:00:00', MOCK_DEFAULT_TIMEZONE).utc().toDate(),
+                    computed_max_end_utc: moment.tz('2024-09-01T09:00:00', MOCK_DEFAULT_TIMEZONE).add(120, 'minutes').utc().toDate(),
+                    potential_conflict_details: null,
                     createdAt: new Date('2024-08-15T00:00:00Z'), updatedAt: new Date('2024-08-15T00:00:00Z'),
                 },
                 {
                     id: MOCK_STAFF_AVAILABILITY_ID_2, membershipId: MOCK_TARGET_ID_FOR_LIST,
-                    rruleString: 'FREQ=WEEKLY;BYDAY=SA,SU;DTSTART=20240907T100000', durationMinutes: 480, isWorking: false,
-                    effectiveStartDate: '2024-09-07', effectiveEndDate: '2024-12-31', description: 'Avail 2 Weekend (Sept-Dec)',
+                    rruleString: 'FREQ=WEEKLY;BYDAY=SA,SU;DTSTART=20240907T100000;UNTIL=20240908T235959Z',
+                    durationMinutes: 480, isWorking: false,
+                    effectiveStartDate: '2024-09-07', effectiveEndDate: '2024-09-08', description: 'Avail 2 Weekend (Sept)',
                     appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                    computed_min_start_utc: moment.tz('2024-09-07T10:00:00', MOCK_DEFAULT_TIMEZONE).utc().toDate(),
+                    // Calcul précis de la fin pour UNTIL=20240908T235959Z, dernière occurrence le 08/09 à 10h + 8h = 18h
+                    computed_max_end_utc: moment.tz('2024-09-08T10:00:00', MOCK_DEFAULT_TIMEZONE).add(480, 'minutes').utc().toDate(),
+                    potential_conflict_details: null,
                     createdAt: new Date('2024-08-10T00:00:00Z'), updatedAt: new Date('2024-08-10T00:00:00Z'),
                 },
             ];
@@ -928,7 +1042,7 @@ describe('StaffAvailabilityService', () => {
         });
 
         it('Func - Liste avec Filtre isWorking = true', async () => {
-            queryDtoForTest = { isWorking: true }; // Le service utilisera les défauts pour page, limit, etc.
+            queryDtoForTest = { isWorking: true };
             const filteredInstances = mockAvailabilityInstances.filter(inst => inst.get('isWorking') === true);
             (db.StaffAvailability.findAndCountAll as jest.Mock).mockResolvedValue({
                 rows: filteredInstances, count: filteredInstances.length,
@@ -940,13 +1054,22 @@ describe('StaffAvailabilityService', () => {
 
             expect(db.StaffAvailability.findAndCountAll).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    where: { membershipId: MOCK_TARGET_ID_FOR_LIST, isWorking: true },
-                    limit: 10, // Attendre les défauts du service
+                    // CORRECTION: La clause where est construite avec Op.and si plusieurs conditions
+                    where: {
+                        [Op.and]: [
+                            { membershipId: MOCK_TARGET_ID_FOR_LIST },
+                            { isWorking: true }
+                        ]
+                    },
+                    limit: 10, // Valeur par défaut du service
                     offset: 0,
-                    order: [['effectiveStartDate', 'ASC']],
+                    order: [['effectiveStartDate', 'ASC']], // Valeur par défaut du service
                 })
             );
-            expect(result.data).toHaveLength(1);
+            expect(result.data).toHaveLength(1); // Basé sur mockAvailabilityInstances et isWorking: true
+            if (result.data.length > 0) { // Pour éviter l'erreur si le filtre ne retourne rien
+                expect(result.data[0].isWorking).toBe(true);
+            }
         });
 
         it('Func - Liste avec Filtre isWorking = false', async () => {
@@ -961,12 +1084,22 @@ describe('StaffAvailabilityService', () => {
             );
             expect(db.StaffAvailability.findAndCountAll).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    where: { membershipId: MOCK_TARGET_ID_FOR_LIST, isWorking: false },
-                    // Les autres paramètres de pagination/tri prendront les valeurs par défaut du service
-                    limit: 10, offset: 0, order: [['effectiveStartDate', 'ASC']],
+                    // CORRECTION: La clause where est construite avec Op.and
+                    where: {
+                        [Op.and]: [
+                            { membershipId: MOCK_TARGET_ID_FOR_LIST },
+                            { isWorking: false }
+                        ]
+                    },
+                    limit: 10,
+                    offset: 0,
+                    order: [['effectiveStartDate', 'ASC']],
                 })
             );
-            expect(result.data).toHaveLength(1);
+            expect(result.data).toHaveLength(1); // Basé sur mockAvailabilityInstances et isWorking: false
+            if (result.data.length > 0) {
+                expect(result.data[0].isWorking).toBe(false);
+            }
         });
 
         it('Func - Liste avec Pagination spécifique (page 2, limit 1)', async () => {
@@ -1004,7 +1137,68 @@ describe('StaffAvailabilityService', () => {
             );
         });
 
-        xit('Func - queryDto contient filterRangeStart et filterRangeEnd', async () => { /* ... */ });
+        it('Func - queryDto contient filterRangeStart et filterRangeEnd valides', async () => {
+            // Arrange
+            const filterStartDate = '2024-09-01';
+            const filterEndDate = '2024-09-01';
+            queryDtoForTest = {
+                filterRangeStart: filterStartDate,
+                filterRangeEnd: filterEndDate,
+                page: 1, limit: 10, // Inclure les défauts pour la complétude du type attendu par le service
+                sortBy: 'effectiveStartDate', sortOrder: 'asc'
+            };
+
+            // Convertir les dates de filtre en UTC pour la comparaison avec ce que le service va utiliser
+            const filterRangeStartUTC = moment.tz(filterStartDate, 'YYYY-MM-DD', MOCK_DEFAULT_TIMEZONE).startOf('day').utc().toDate();
+            const filterRangeEndUTC = moment.tz(filterEndDate, 'YYYY-MM-DD', MOCK_DEFAULT_TIMEZONE).endOf('day').utc().toDate();
+
+            // Simuler que le pré-filtre SQL retourne la première règle (mockAvailabilitiesData[0])
+            // car sa computed_min_start_utc et computed_max_end_utc chevauchent le 2024-09-01
+            // mockAvailabilitiesData[0] : computed_min_start_utc: 2024-09-01T07:00:00Z, computed_max_end_utc: 2024-09-01T09:00:00Z (avec timezone Europe/Paris)
+            // mockAvailabilitiesData[1] : commence le 2024-09-07, donc ne devrait pas être retourné par le pré-filtre
+            const preFilteredCandidates = [mockAvailabilityInstances[0]]; // Contient l'instance pour ID 301
+            (db.StaffAvailability.findAndCountAll as jest.Mock).mockResolvedValue({
+                rows: preFilteredCandidates, // Seulement la première règle passe le pré-filtre
+                count: 1, // Compte après pré-filtre SQL
+            });
+
+            // Act
+            const result = await staffAvailabilityService.listStaffAvailabilitiesForMember(
+                MOCK_TARGET_ID_FOR_LIST,
+                MOCK_ESTABLISHMENT_ID,
+                queryDtoForTest
+            );
+
+            // Assert
+            expect(db.Membership.findOne).toHaveBeenCalled();
+            expect(db.StaffAvailability.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
+                where: {
+                    [Op.and]: [ // Le service construit ainsi
+                        { membershipId: MOCK_TARGET_ID_FOR_LIST },
+                        {
+                            computed_min_start_utc: { [Op.lt]: filterRangeEndUTC },
+                            [Op.or]: [
+                                { computed_max_end_utc: { [Op.gt]: filterRangeStartUTC } },
+                                { computed_max_end_utc: null }
+                            ]
+                        }
+                        // Si queryDtoForTest contenait isWorking, il serait aussi dans le Op.and
+                    ]
+                },
+                limit: 10,
+                offset: 0,
+                order: [['effectiveStartDate', 'ASC']]
+            }));
+
+            // La logique de filtrage fin en mémoire du service va maintenant s'exécuter sur preFilteredCandidates[0]
+            // generateOccurrences pour cette règle le 2024-09-01 devrait retourner une occurrence.
+            expect(result.data).toHaveLength(1);
+            expect(result.data[0].id).toBe(MOCK_STAFF_AVAILABILITY_ID_1);
+            expect(result.meta.totalItems).toBe(1); // Basé sur le count du pré-filtre SQL après filtrage fin
+                                                    // Dans notre cas, comme on a simulé le retour de findAndCountAll
+                                                    // pour qu'il ne retourne que des candidats pertinents, et que
+                                                    // le filtrage fin les garde tous, le count correspond.
+        });
 
         // --- Edge Cases ---
         it('Edge - Liste pour un Membre sans Aucune Disponibilité', async () => {
@@ -1103,7 +1297,9 @@ describe('StaffAvailabilityService', () => {
                 effectiveEndDate: '2024-10-05',
                 description: 'Original Description',
                 appliedShiftTemplateRuleId: 111,
-                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID - 1,
+                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID -1,
+                computed_min_start_utc: new Date('2024-10-01T09:00:00Z'),
+                computed_max_end_utc: new Date('2024-10-05T13:00:00Z'), // 09:00 + 240 min * 5 jours, fin le 5ème jour à 13:00
                 potential_conflict_details: null,
                 createdAt: new Date('2024-09-01T00:00:00Z'),
                 updatedAt: new Date('2024-09-01T00:00:00Z'),
@@ -1129,7 +1325,9 @@ describe('StaffAvailabilityService', () => {
             // Cette instance contiendra les données mises à jour.
             // Elle sera configurée dans chaque test au besoin.
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>({
-                ...mockExistingAvailabilityData
+                ...mockExistingAvailabilityData,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
             });
             (db.StaffAvailability.findAll as jest.Mock).mockResolvedValue([]);
             mockConflictCheckForUpdate(false, undefined, null);
@@ -1138,20 +1336,31 @@ describe('StaffAvailabilityService', () => {
         // --- Functional / "Happy Path" ---
         it('Func - Mise à Jour Réussie de description Seule', async () => {
             mockUpdateDto = { description: 'Updated Description Only' };
-            const expectedDataInUpdateCall = {
-                description: 'Updated Description Only',
-                appliedShiftTemplateRuleId: null,
+            mockConflictCheckForUpdate(false, undefined, null);
+
+            // Le service, si dto.description est fourni et que la règle vient d'un template,
+            // met à jour la description avec la nouvelle valeur (pas de préfixe) et détache.
+            // Les champs computed_* ne sont pas recalculés car les champs temporels ne sont pas dans le DTO.
+            const expectedPayloadForDbUpdate = {
+                description: 'Updated Description Only', // CORRIGÉ: C'est la nouvelle description
+                appliedShiftTemplateRuleId: null,        // Détaché car DTO non vide et règle de template
                 createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
                 potential_conflict_details: null,
+                // computed_* ne sont pas dans le payload de l'update car non modifiés
             };
+
             const dataForRefetch: StaffAvailabilityAttributes = {
-                ...mockExistingAvailabilityData,
+                ...mockExistingAvailabilityData, // Base
                 description: 'Updated Description Only',
                 appliedShiftTemplateRuleId: null,
                 createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
                 potential_conflict_details: null,
+                // computed_* restent ceux de mockExistingAvailabilityData
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
                 updatedAt: expect.any(Date) as Date,
             };
+
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
                 .mockResolvedValueOnce(mockAvailabilityInstanceToUpdate)
@@ -1162,13 +1371,15 @@ describe('StaffAvailabilityService', () => {
             );
 
             expect(db.StaffAvailability.update).toHaveBeenCalledWith(
-                expect.objectContaining(expectedDataInUpdateCall),
+                expect.objectContaining(expectedPayloadForDbUpdate),
                 expect.objectContaining({ where: { id: MOCK_AVAIL_ID_TO_UPDATE } })
             );
             expect(result.description).toBe('Updated Description Only');
             expect(result.appliedShiftTemplateRuleId).toBeNull();
             expect(result.createdByMembershipId).toBe(MOCK_ADMIN_MEMBERSHIP_ID);
-            expect(result.potential_conflict_details).toBeNull(); // VÉRIFIER CECI
+            expect(result.potential_conflict_details).toBeNull();
+            expect(result.computed_min_start_utc).toEqual(mockExistingAvailabilityData.computed_min_start_utc);
+            expect(result.computed_max_end_utc).toEqual(mockExistingAvailabilityData.computed_max_end_utc);
         });
 
         it('Func - Mise à Jour de rruleString, durationMinutes, isWorking, effectiveStartDate, effectiveEndDate', async () => {
@@ -1179,7 +1390,15 @@ describe('StaffAvailabilityService', () => {
                 effectiveStartDate: '2024-11-01',
                 effectiveEndDate: '2025-03-31',
             };
-            const expectedUpdatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, updatedAt: expect.any(Date) };
+            const expectedUpdatedData = {
+                ...mockExistingAvailabilityData,
+                ...mockUpdateDto,
+                appliedShiftTemplateRuleId: null,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
+                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                updatedAt: expect.any(Date)
+            };
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(expectedUpdatedData);
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
@@ -1200,7 +1419,15 @@ describe('StaffAvailabilityService', () => {
         it('Func - Mise à Jour d\'une règle initialement générée par un template (appliedShiftTemplateRuleId devient null)', async () => {
             // mockExistingAvailabilityData.appliedShiftTemplateRuleId est déjà 111
             mockUpdateDto = { description: 'Manual override of template rule' };
-            const expectedUpdatedData = { ...mockExistingAvailabilityData, description: 'Manual override of template rule', appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, updatedAt: expect.any(Date) };
+            const expectedUpdatedData = {
+                ...mockExistingAvailabilityData,
+                description: 'Manual override of template rule',
+                appliedShiftTemplateRuleId: null,
+                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
+                updatedAt: expect.any(Date)
+            };
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(expectedUpdatedData);
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
@@ -1225,7 +1452,14 @@ describe('StaffAvailabilityService', () => {
 
         it('Func - Mise à Jour pour enlever effectiveEndDate (passant null)', async () => {
             mockUpdateDto = { effectiveEndDate: undefined };
-            const expectedUpdatedData = { ...mockExistingAvailabilityData, effectiveEndDate: null, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, updatedAt: expect.any(Date) };
+            const expectedUpdatedData = {
+                ...mockExistingAvailabilityData,
+                effectiveEndDate: null,
+                appliedShiftTemplateRuleId: null,
+                createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
+                updatedAt: expect.any(Date) };
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(expectedUpdatedData);
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
@@ -1246,6 +1480,8 @@ describe('StaffAvailabilityService', () => {
                 ...mockExistingAvailabilityData,
                 potential_conflict_details: null,
                 updatedAt: expect.any(Date) as Date,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
             };
 
             // Configurer le re-fetch pour retourner cela :
@@ -1330,35 +1566,49 @@ describe('StaffAvailabilityService', () => {
         // [CHEV] Tests Edge pour chevauchement (marqués xit)
         it('[CHEV] Edge - MàJ se terminant EXACTEMENT quand une autre commence (Pas de Chevauchement)', async () => {
             mockConflictCheckForUpdate(false, undefined, null);
-            mockUpdateDto = { effectiveEndDate: '2024-10-01', durationMinutes: 60 }; // Simule un ajustement
-            // Configurer le re-fetch pour refléter le succès
-            const updatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, potential_conflict_details: null };
+            mockUpdateDto = { effectiveEndDate: '2024-10-01', durationMinutes: 60, description: 'Ends just before' };
+            const updatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, potential_conflict_details: null, updatedAt: expect.any(Date) as Date };
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(updatedData);
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
                 .mockResolvedValueOnce(mockAvailabilityInstanceToUpdate)
                 .mockResolvedValueOnce(mockRefetchedAvailabilityInstance);
 
-
-            await expect(staffAvailabilityService.updateStaffAvailability(MOCK_AVAIL_ID_TO_UPDATE, mockUpdateDto, MOCK_ESTABLISHMENT_ID, MOCK_ADMIN_MEMBERSHIP_ID))
-                .resolves.toBeDefined();
+            const result = await staffAvailabilityService.updateStaffAvailability(MOCK_AVAIL_ID_TO_UPDATE, mockUpdateDto, MOCK_ESTABLISHMENT_ID, MOCK_ADMIN_MEMBERSHIP_ID);
             expect(mockOverlapDetectionService.checkForConflicts).toHaveBeenCalled();
             expect(db.StaffAvailability.update).toHaveBeenCalled();
+            expect(result.potential_conflict_details).toBeNull();
         });
+
         it('[CHEV] Edge - MàJ commençant EXACTEMENT quand une autre se termine (Pas de Chevauchement)', async () => {
             mockConflictCheckForUpdate(false, undefined, null);
-            mockUpdateDto = { effectiveStartDate: '2024-10-02', rruleString: 'DTSTART=20241002T100000;FREQ=DAILY;COUNT=1' };
-            const updatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, potential_conflict_details: null };
+            mockUpdateDto = { effectiveStartDate: '2024-10-02', rruleString: 'DTSTART=20241002T100000;FREQ=DAILY;COUNT=1', description: 'Starts just after' };
+            const updatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, potential_conflict_details: null, updatedAt: expect.any(Date) as Date };
             mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(updatedData);
             (db.StaffAvailability.findByPk as jest.Mock)
                 .mockReset()
                 .mockResolvedValueOnce(mockAvailabilityInstanceToUpdate)
                 .mockResolvedValueOnce(mockRefetchedAvailabilityInstance);
 
-
-            await expect(staffAvailabilityService.updateStaffAvailability(MOCK_AVAIL_ID_TO_UPDATE, mockUpdateDto, MOCK_ESTABLISHMENT_ID, MOCK_ADMIN_MEMBERSHIP_ID))
-                .resolves.toBeDefined();
+            const result = await staffAvailabilityService.updateStaffAvailability(MOCK_AVAIL_ID_TO_UPDATE, mockUpdateDto, MOCK_ESTABLISHMENT_ID, MOCK_ADMIN_MEMBERSHIP_ID);
             expect(mockOverlapDetectionService.checkForConflicts).toHaveBeenCalled();
+            expect(result.potential_conflict_details).toBeNull();
+        });
+
+        it('[CHEV] Edge - Réduction de période éliminant un chevauchement qui aurait existé (Pas de nouveau conflit)', async () => {
+            mockConflictCheckForUpdate(false, undefined, null); // Pas de nouveau conflit après réduction
+            mockUpdateDto = { durationMinutes: 30 }; // Réduire la durée
+            const updatedData = { ...mockExistingAvailabilityData, ...mockUpdateDto, appliedShiftTemplateRuleId: null, createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID, potential_conflict_details: null, updatedAt: expect.any(Date) as Date };
+            mockRefetchedAvailabilityInstance = mockSequelizeModelInstance<StaffAvailabilityAttributes>(updatedData);
+            (db.StaffAvailability.findByPk as jest.Mock)
+                .mockReset()
+                .mockResolvedValueOnce(mockAvailabilityInstanceToUpdate)
+                .mockResolvedValueOnce(mockRefetchedAvailabilityInstance);
+
+            const result = await staffAvailabilityService.updateStaffAvailability(MOCK_AVAIL_ID_TO_UPDATE, mockUpdateDto, MOCK_ESTABLISHMENT_ID, MOCK_ADMIN_MEMBERSHIP_ID);
+            expect(mockOverlapDetectionService.checkForConflicts).toHaveBeenCalled();
+            expect(result.potential_conflict_details).toBeNull();
+            expect(db.StaffAvailability.update).toHaveBeenCalled();
         });
 
         // --- Adversarial / Error Handling / "Sad Path" ---
@@ -1376,11 +1626,11 @@ describe('StaffAvailabilityService', () => {
 
         testUpdateBlockingConflictScenario(
             'Étend période et chevauche',
-            { durationMinutes: 10 * 60 } // Assez long pour chevaucher quelque chose
+            { durationMinutes: 10 * 60, description: "Extending period to cause conflict" } // Ajouter les champs obligatoires si UpdateStaffAvailabilityDto les attend
         );
         testUpdateBlockingConflictScenario(
             'Déplace période et chevauche',
-            { effectiveStartDate: '2024-10-01', rruleString: 'DTSTART=20241001T080000;FREQ=DAILY;COUNT=1' } // Déplacé plus tôt
+            { effectiveStartDate: '2024-09-30', rruleString: 'DTSTART=20240930T080000;FREQ=DAILY;COUNT=1', description: "Moving period to cause conflict" }
         );
 
         it('Adv - staffAvailabilityId Inexistant', async () => {
@@ -1460,7 +1710,9 @@ describe('StaffAvailabilityService', () => {
                 description: "Update with non-blocking conflict",
                 appliedShiftTemplateRuleId: null,
                 createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
-                potential_conflict_details: potentialConflict, // AJOUTÉ
+                potential_conflict_details: potentialConflict,
+                computed_min_start_utc: mockExistingAvailabilityData.computed_min_start_utc,
+                computed_max_end_utc: mockExistingAvailabilityData.computed_max_end_utc,
                 updatedAt: expect.any(Date) as Date,
             };
             (db.StaffAvailability.findByPk as jest.Mock)
@@ -1508,6 +1760,9 @@ describe('StaffAvailabilityService', () => {
                 description: 'To be deleted',
                 appliedShiftTemplateRuleId: null,
                 createdByMembershipId: MOCK_ADMIN_MEMBERSHIP_ID,
+                computed_min_start_utc: new Date('2024-11-01T00:00:00Z'), // Ajuster selon rruleString
+                computed_max_end_utc: new Date('2024-11-01T01:00:00Z'),   // Ajuster
+                potential_conflict_details: null,
                 createdAt: new Date(),
                 updatedAt: new Date(),
             };
