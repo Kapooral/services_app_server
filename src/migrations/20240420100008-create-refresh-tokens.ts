@@ -4,7 +4,7 @@ import { QueryInterface, DataTypes, Sequelize, Transaction } from 'sequelize';
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-    async up (queryInterface: QueryInterface, sequelize: Sequelize) {
+    async up (queryInterface: QueryInterface) {
         await queryInterface.sequelize.transaction(async (transaction: Transaction) => {
             await queryInterface.createTable('refresh_tokens', {
                 id: {
@@ -61,9 +61,9 @@ module.exports = {
         });
     },
 
-    async down (queryInterface: QueryInterface, sequelize: Sequelize) {
+    async down (queryInterface: QueryInterface) {
         await queryInterface.sequelize.transaction(async (transaction) => {
-            await queryInterface.removeIndex('refresh_tokens', ['user_id'], { transaction });
+            // await queryInterface.removeIndex('refresh_tokens', ['user_id'], { transaction });
             await queryInterface.dropTable('refresh_tokens', { transaction });
         });
     }

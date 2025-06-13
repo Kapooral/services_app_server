@@ -1,6 +1,6 @@
 // src/models/Establishment.ts
 import { Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin, HasManyGetAssociationsMixin, HasManyAddAssociationMixin, HasManyCountAssociationsMixin } from 'sequelize';
-import User, { UserAttributes } from './User';
+import User  from './User';
 import Service from './Service'; // Importations à ajouter dans index.ts
 import AvailabilityRule from './AvailabilityRule'; // Importations à ajouter dans index.ts
 import AvailabilityOverride from './AvailabilityOverride'; // Importations à ajouter dans index.ts

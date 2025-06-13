@@ -1,8 +1,8 @@
 // src/services/service.service.ts
 import { ModelCtor, FindOptions, Op } from 'sequelize';
 import db from '../models'; // Assurez-vous que db contient tous les modèles nécessaires
-import Service, { ServiceAttributes } from '../models/Service';
-import Establishment from '../models/Establishment'; // Utilisé indirectement via db ou EstablishmentService
+import Service from '../models/Service';
+
 import Booking, { BookingStatus } from '../models/Booking';
 import { EstablishmentService } from './establishment.service';
 import { CreateServiceDto, UpdateServiceDto } from '../dtos/service.validation';
@@ -181,11 +181,7 @@ export class ServiceService {
             return null; // Ou lancer une ServiceNotFoundError si on préfère 404
         }
 
-        // Optionnel: Nettoyer l'objet avant de le retourner si on ne veut pas exposer l'objet 'establishment' imbriqué
         const plainService = service.get({ plain: true });
-        // @ts-ignore
-        delete plainService.establishment; // Supprime la propriété imbriquée après vérification
-
         return plainService as Service; // Retourne l'objet service nettoyé
     }
 }

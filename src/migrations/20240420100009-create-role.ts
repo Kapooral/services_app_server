@@ -1,6 +1,6 @@
 'use strict';
 
-import { QueryInterface, DataTypes, Sequelize, Transaction } from 'sequelize';
+import { QueryInterface, DataTypes, Sequelize } from 'sequelize';
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
@@ -39,7 +39,7 @@ module.exports = {
         // Optionnel: Ajouter un index explicite si nécessaire (unique est déjà un index)
         // await queryInterface.addIndex('roles', ['name'], { unique: true, name: 'roles_name_unique' });
     },
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize) {
+    async down(queryInterface: QueryInterface) {
         await queryInterface.dropTable('roles');
     }
 };

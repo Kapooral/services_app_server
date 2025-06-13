@@ -7,10 +7,8 @@ interface UserRoleAttributes {
     roleId: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
-interface UserRoleCreationAttributes extends UserRoleAttributes {}
 
-class UserRole extends Model<UserRoleAttributes, UserRoleCreationAttributes> implements UserRoleAttributes {
+class UserRole extends Model<UserRoleAttributes> {
     public userId!: ForeignKey<User['id']>;
     public roleId!: ForeignKey<Role['id']>;
 }

@@ -1,11 +1,11 @@
 import {
     Model, DataTypes, Optional, Sequelize, BelongsToGetAssociationMixin,
-    HasManyGetAssociationsMixin, HasManyAddAssociationMixin, HasManyCountAssociationsMixin,
+    HasManyGetAssociationsMixin, HasManyCountAssociationsMixin,
     BelongsToManyGetAssociationsMixin, BelongsToManyAddAssociationMixin
 } from 'sequelize';
 import User from './User';
 import Establishment from './Establishment';
-import StaffAvailability from './StaffAvailability'; // Sera créé ensuite
+
 import Service from './Service'; // Pour l'association N:M
 import Booking from './Booking'; // Pour l'association 1:N
 
@@ -62,10 +62,6 @@ class Membership extends Model<MembershipAttributes, MembershipCreationAttribute
     public setEstablishment!: BelongsToGetAssociationMixin<Establishment>;
     public createEstablishment!: BelongsToGetAssociationMixin<Establishment>;
 
-    public getStaffAvailabilities!: HasManyGetAssociationsMixin<StaffAvailability>;
-    public addStaffAvailability!: HasManyAddAssociationMixin<StaffAvailability, number>;
-    public countStaffAvailabilities!: HasManyCountAssociationsMixin;
-
     public getAssignedServices!: BelongsToManyGetAssociationsMixin<Service>;
     public addAssignedService!: BelongsToManyAddAssociationMixin<Service, number>;
     public countAssignedServices!: HasManyCountAssociationsMixin;
@@ -77,7 +73,6 @@ class Membership extends Model<MembershipAttributes, MembershipCreationAttribute
     // --- Associations (définies dans index.ts) ---
     public readonly user?: User | null;
     public readonly establishment?: Establishment;
-    public readonly staffAvailabilities?: StaffAvailability[];
     public readonly assignedServices?: Service[];
     public readonly assignedBookings?: Booking[];
 }
@@ -109,17 +104,16 @@ export const initMembership = (sequelize: Sequelize) => {
         },
         {
             sequelize,
-            tableName: 'memberships', // Nom de table en snake_case pluriel
+            tableName: 'memberships',
             modelName: 'Membership',
             timestamps: true,
             underscored: true,
             indexes: [
-                // Index pour recherches fréquentes
+                { fields: ['status'] },
                 { fields: ['user_id'] },
                 { fields: ['establishment_id'] },
                 { unique: true, fields: ['invitation_token_hash'] }, // Index unique pour token
-                { fields: ['status'] },
-                // Contraintes uniques définies via 'constraints' dans la migration pour plus de clarté
+                { unique: true, fields: ['invited_email', 'establishment_id'] },
             ]
         }
     );

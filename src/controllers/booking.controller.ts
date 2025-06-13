@@ -9,7 +9,7 @@ import {
 
 import { AppError } from '../errors/app.errors';
 import { AuthenticationError } from '../errors/auth.errors';
-import { BookingNotFoundError, BookingOwnershipError } from '../errors/booking.errors';
+import { BookingNotFoundError } from '../errors/booking.errors';
 
 export class BookingController {
     private bookingService: BookingService;

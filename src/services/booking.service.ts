@@ -1,15 +1,15 @@
 // src/services/booking.service.ts
-import { ModelCtor, FindOptions, Op, Transaction, Includeable, Sequelize, WhereOptions, OrderItem, UniqueConstraintError as SequelizeUniqueConstraintError } from 'sequelize';
+import { ModelCtor, FindOptions, Op, Transaction, Includeable, WhereOptions, OrderItem, UniqueConstraintError as SequelizeUniqueConstraintError } from 'sequelize';
 import db from '../models';
 import Booking, { BookingStatus, PaymentStatus, BookingAttributes } from '../models/Booking';
 import Service from '../models/Service';
-import Establishment from '../models/Establishment';
+
 import User from '../models/User';
 import { AvailabilityService } from './availability.service';
 import { EstablishmentService } from './establishment.service';
 import { INotificationService } from './notification.service';
 import { CreateBookingDto, UpdateBookingStatusDto, GetEstablishmentBookingsQueryDto } from '../dtos/booking.validation';
-import { parseISO, startOfDay, endOfDay, addDays } from 'date-fns';
+import { parseISO, startOfDay, endOfDay } from 'date-fns';
 
 import {
     BookingNotFoundError,

@@ -61,7 +61,6 @@ describe('Membership Invitation & Acceptance Integration Tests', () => {
         // Nettoyage ordonné
         await db.Booking.destroy({ where: {}, force: true, cascade: true });
         await db.ServiceMemberAssignment.destroy({ where: {}, force: true });
-        await db.StaffAvailability.destroy({ where: {}, force: true });
         await db.Membership.destroy({ where: {}, force: true });
         await db.AvailabilityOverride.destroy({ where: {} });
         await db.AvailabilityRule.destroy({ where: {} });

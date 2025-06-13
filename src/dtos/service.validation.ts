@@ -48,7 +48,7 @@ export function mapToPublicServiceDto(service: ServiceAttributes) {
         (!service.discount_start_date || service.discount_start_date <= now) &&
         (!service.discount_end_date || service.discount_end_date >= now);
 
-    const { discount_start_date, discount_end_date, ...publicData } = service;
+    const { ...publicData } = service;
 
     if (!isDiscountActive) {
         delete publicData.discount_price;

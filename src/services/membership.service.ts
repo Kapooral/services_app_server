@@ -2,14 +2,14 @@
 import {ModelCtor, Op, WhereOptions, Order, Includeable, FindOptions} from 'sequelize';
 import crypto from 'crypto';
 import db from '../models'; // Accès à tous les modèles via db
-import User, { UserAttributes } from '../models/User';
+import User from '../models/User';
 import Establishment from '../models/Establishment';
 import Membership, { MembershipStatus, MembershipRole, MembershipAttributes } from '../models/Membership';
 import { InviteMemberDto, UpdateMembershipDto, GetMembershipsQueryDto } from '../dtos/membership.validation';
 import { INotificationService } from './notification.service';
 import { AppError } from '../errors/app.errors';
 import { MembershipNotFoundError, InvitationTokenInvalidError, UserAlreadyMemberError, CannotUpdateLastAdminError, CannotDeleteLastAdminError } from '../errors/membership.errors';
-import { UserNotFoundError, DuplicateEmailError } from '../errors/user.errors';
+import { UserNotFoundError } from '../errors/user.errors';
 import { AuthorizationError } from '../errors/auth.errors';
 
 const INVITATION_TOKEN_BYTES = 32;
@@ -388,7 +388,7 @@ export class MembershipService {
 
         const { status: newStatus, role: newRole } = updateDto;
         const updates: Partial<MembershipAttributes> = {};
-        let isUpdatingSelf = actorMembership.userId === targetMembership.userId;
+        const isUpdatingSelf = actorMembership.userId === targetMembership.userId;
 
         // 2. Logique de Protection "Seul Admin"
         if (isUpdatingSelf && targetMembership.role === MembershipRole.ADMIN) {

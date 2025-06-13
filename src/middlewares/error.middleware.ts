@@ -1,40 +1,42 @@
-// src/middlewares/error.middleware.ts (Exemple Structure)
+// src/middlewares/error.handler.ts
+
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { AppError } from '../errors/app.errors'; // Votre classe de base
+import { AppError } from '../errors/app.errors'; // Assurez-vous d'importer votre classe d'erreur de base
 
-const errorMiddleware = (error: Error, req: Request, res: Response, next: NextFunction) => {
-    console.error("💥 ERROR:", error.name, error.message, error.stack); // Log détaillé
+export function globalErrorHandler(
+    error: Error,
+    req: Request,
+    res: Response,
+    next: NextFunction
+): void {
+    console.error('Global Error Handler caught:', error); // Pour le débogage
 
-    let statusCode = 500;
-    let message = 'Internal Server Error';
-    let errors: any | undefined = undefined;
-    let errorName: string | undefined = undefined; // << AJOUTER
+    if (error instanceof ZodError) {
+        res.status(400).json({
+            name: 'ZodValidationError',
+            message: 'Invalid input data provided.',
+            details: error.errors.map(e => ({
+                path: e.path,
+                message: e.message,
+            })),
+        });
+        return;
+    }
 
     if (error instanceof AppError) {
-        statusCode = error.statusCode;
-        message = error.message;
-        errorName = error.name; // << CAPTURER LE NOM
-        // errors = error.errors; // Si votre AppError a une propriété 'errors'
-    } else if (error instanceof ZodError) {
-        statusCode = 400;
-        message = 'Validation failed';
-        errorName = 'ZodValidationError'; // Nom générique pour Zod
-        errors = error.errors.map(e => ({
-            path: e.path.join('.'),
-            message: e.message,
-            code: e.code, // Inclure le code Zod peut aider
-        }));
+        res.status(error.statusCode).json({
+            name: error.name,
+            message: error.message,
+            errorCode: error.errorCode,
+            details: error.details,
+        });
+        return;
     }
-    // Ajouter d'autres instanceof pour erreurs spécifiques (SequelizeUniqueConstraintError, etc.) si nécessaire
 
-    res.status(statusCode).json({
-        status: 'error',
-        name: errorName, // << INCLURE LE NOM DANS LA REPONSE
-        message,
-        errors, // Inclure le tableau d'erreurs Zod ou autres détails
-        // stack: process.env.NODE_ENV === 'development' ? error.stack : undefined, // Optionnel pour dev
+    // Pour toutes les autres erreurs inattendues
+    res.status(500).json({
+        name: 'InternalServerError',
+        message: 'An unexpected error occurred. Please try again later.',
     });
-};
-
-export default errorMiddleware;
+}

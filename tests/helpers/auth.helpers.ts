@@ -20,7 +20,6 @@ export async function generateTestUser(userData: Partial<UserCreationAttributes>
         email: userData.email || `test_${Date.now()}@test.com`,
         email_masked: `t***t@test.com`,
         password: hash, // Stocker le hash complet
-        // salt: 'REMOVED', // Ne plus stocker le sel séparément
         is_active: true,
         is_email_active: true,
         is_phone_active: false,
@@ -30,8 +29,6 @@ export async function generateTestUser(userData: Partial<UserCreationAttributes>
 
     // Fusionner les données par défaut avec celles fournies, en s'assurant que password n'est pas écrasé par userData si userData.password était null/undefined
     const finalUserData = { ...defaultUser, ...userData, password: hash };
-    // Retirer le champ salt s'il est présent dans userData
-    delete (finalUserData as any).salt;
 
 
     const newUser = await db.User.create(finalUserData);

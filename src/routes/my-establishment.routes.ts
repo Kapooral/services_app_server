@@ -12,17 +12,16 @@ import { BookingService } from '../services/booking.service';
 import { fileService } from '../services/file.service';
 import { MembershipService } from '../services/membership.service';
 
-import { ensureOwnsEstablishment, requireRole } from '../middlewares/auth.middleware';
+import { ensureOwnsEstablishment } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 import { ensureMembership, ensureAdminOrSelfForMembership, ensureCanListMemberTimeOffRequestsOnEstablishmentRoute } from '../middlewares/auth.middleware';
 
 import { MembershipRole } from '../models'
 import {TimeOffRequestController} from "../controllers/timeoff-request.controller";
 import {ConsoleNotificationService} from "../services/notification.service";
-import shiftTemplateAdminRouter from './planning/shift-template.routes';
-import staffAvailabilityAdminRouter from './planning/staff-availability.routes';
 
-const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
+import createAdvancedPlanningRouter from './advanced-planning.routes';
+
 const establishmentPictureUpload = multer(fileService.multerOptions).single('profilePicture');
 
 export const createMyEstablishmentRouter = (
@@ -75,8 +74,8 @@ export const createMyEstablishmentRouter = (
 
     router.get('/time-off-requests', ensureMembership([MembershipRole.ADMIN]), timeOffRequestController.listForEstablishment);
 
-    router.use('/planning-shift-templates', ensureMembership([MembershipRole.ADMIN]), shiftTemplateAdminRouter);
-    router.use('/staff-availabilities-management', ensureMembership([MembershipRole.ADMIN]), staffAvailabilityAdminRouter);
+    const advancedPlanningRouter = createAdvancedPlanningRouter();
+    router.use('/planning', advancedPlanningRouter);
 
     return router;
 };

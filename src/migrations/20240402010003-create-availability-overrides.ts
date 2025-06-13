@@ -66,6 +66,6 @@ export async function up(queryInterface: QueryInterface, sequelize: Sequelize): 
  * @param {QueryInterface} queryInterface - L'interface de requête Sequelize.
  * @param {Sequelize} sequelize - L'instance Sequelize.
  */
-export async function down(queryInterface: QueryInterface, sequelize: Sequelize): Promise<void> {
+export async function down(queryInterface: QueryInterface): Promise<void> {
     await queryInterface.dropTable('availability_overrides');
 }

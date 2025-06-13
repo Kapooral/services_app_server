@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { ServiceService } from '../services/service.service';
 import { AvailabilityService } from '../services/availability.service';
 import { ServiceController } from '../controllers/service.controller';
-import { requireAuth, requireRole, requireServiceOwner, ensureMembership } from '../middlewares/auth.middleware';
+import { requireAuth, requireServiceOwner, ensureMembership } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 import { MembershipRole } from '../models'
 
@@ -11,8 +11,6 @@ export interface ServiceRouters {
     servicesRootRouter: Router; // Router pour /api/services/:serviceId/...
     myServicesRouter: Router;   // Router pour /users/me/establishments/:establishmentId/services/...
 }
-
-const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
 
 export const createServiceRouter = (
     serviceService: ServiceService,

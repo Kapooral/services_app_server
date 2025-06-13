@@ -59,7 +59,6 @@ export class TimeOffRequestController {
      */
     public listForMember = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
         try {
-            const actorMembership = req.membership as MembershipAttributes;
             const establishmentId = parseInt(req.params.establishmentId, 10);
             const targetMembershipId = parseInt(req.params.membershipId, 10); // Renommer pour clarté vs :requestId
 

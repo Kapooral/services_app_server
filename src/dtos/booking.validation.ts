@@ -1,6 +1,6 @@
 // src/dtos/booking.validation.ts
 import { z } from 'zod';
-import { isValid, parseISO, startOfDay, endOfDay, addDays } from 'date-fns';
+import { isValid, parseISO, startOfDay } from 'date-fns';
 import Booking, { BookingStatus, PaymentStatus } from '../models/Booking';
 
 import { getAbsoluteProfilePictureURL } from '../utils/url.utils';
@@ -16,7 +16,7 @@ export type CreateBookingDto = z.infer<typeof CreateBookingSchema>;
 
 export const UpdateBookingStatusSchema = z.object({
     status: z.nativeEnum(BookingStatus, {
-        errorMap: (issue, ctx) => ({ message: 'Invalid booking status provided.' })
+        errorMap: () => ({ message: 'Invalid booking status provided.' })
     }).optional(),
     establishmentNotes: z.string().max(1000).optional().nullable(),
 })
@@ -33,7 +33,6 @@ const AdminBookingClientInfoSchema = z.object({
     email: z.string().email().optional().nullable(), // Garder optionnel/nullable
     profile_picture: z.string().url().optional().nullable(),
 });
-type AdminBookingClientInfoDto = z.infer<typeof AdminBookingClientInfoSchema>;
 
 // --- NOUVEAU: Schéma pour les infos Service dans AdminBookingDto ---
 const AdminBookingServiceInfoSchema = z.object({
@@ -41,7 +40,6 @@ const AdminBookingServiceInfoSchema = z.object({
     name: z.string(),
     duration_minutes: z.number().optional(), // Garder optionnel au cas où
 });
-type AdminBookingServiceInfoDto = z.infer<typeof AdminBookingServiceInfoSchema>;
 
 
 // --- NOUVEAU: DTO pour la sortie admin ---

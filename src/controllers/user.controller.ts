@@ -3,14 +3,11 @@ import { Request, Response, NextFunction } from 'express';
 import { UserService } from '../services/user.service';
 import { fileService } from '../services/file.service';
 import {
-    CreateUserSchema, UpdateUserSchema, VerifyCodeSchema, UpdateEmailSchema, RequestPasswordResetSchema,
+    CreateUserSchema, UpdateUserSchema, UpdateEmailSchema, RequestPasswordResetSchema,
     ValidateResetTokenSchema, UpdatePasswordSchema, DeleteAccountConfirmationSchema, PerformPasswordResetSchema,
     ActivateAccountSchema, mapToUserOutputDto, mapToMeOutputDto
 } from '../dtos/user.validation';
-import {
-    UserNotFoundError, BadRequestError, InvalidCredentialsError, AuthenticationError,
-    VerificationActivationTokenError
-} from '../errors/user.errors';
+import { UserNotFoundError, BadRequestError, InvalidCredentialsError, AuthenticationError } from '../errors/user.errors';
 import { AppError } from '../errors/app.errors';
 import { ZodError } from 'zod';
 

@@ -9,24 +9,20 @@ export type LoginInitiateDto = z.infer<typeof LoginInitiateSchema>;
 export const SendTwoFactorCodeSchema = z.object({
     method: z.enum(['email', 'sms'], { required_error: "2FA method ('email' or 'sms') is required" }),
 });
-export type SendTwoFactorCodeDto = z.infer<typeof SendTwoFactorCodeSchema>;
 
 export const VerifyTwoFactorCodeSchema = z.object({
     code: z.string().min(6, "Code must be at least 6 characters long").max(32, "Code is too long"),
 });
-export type VerifyTwoFactorCodeDto = z.infer<typeof VerifyTwoFactorCodeSchema>;
 
 export const EnableTotpSchema = z.object({
     password: z.string(),
     secret: z.string(),
     token: z.string().length(6, "TOTP token must be 6 digits"),
 });
-export type EnableTotpDto = z.infer<typeof EnableTotpSchema>;
 
 export const DisableTotpSchema = z.object({
     password: z.string(),
 });
-export type DisableTotpDto = z.infer<typeof DisableTotpSchema>;
 
 export interface PreTwoFactorPayload { userId: number; type: 'pre-2fa'; }
 export interface AccessTokenPayload { userId: number; username: string; type: 'access'; }

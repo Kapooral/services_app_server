@@ -99,7 +99,7 @@ module.exports = {
         await queryInterface.addIndex('time_off_requests', ['start_date', 'end_date']);
     },
 
-    async down(queryInterface: QueryInterface, sequelize: Sequelize) {
+    async down(queryInterface: QueryInterface) {
         await queryInterface.dropTable('time_off_requests');
     }
 };

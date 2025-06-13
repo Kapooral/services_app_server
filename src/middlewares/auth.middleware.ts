@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
 import db from '../models';
-import Establishment from '../models/Establishment';
 import { AccessTokenPayload } from '../dtos/auth.validation';
 
 import { AppError } from '../errors/app.errors';
@@ -18,24 +17,13 @@ import {
     TimeOffRequestNotFoundError
 } from '../errors/availability.errors';
 
-import Membership, { MembershipAttributes, MembershipRole, MembershipStatus } from '../models/Membership';
-import TimeOffRequest, { TimeOffRequestAttributes } from '../models/TimeOffRequest';
+import { MembershipRole, MembershipStatus } from '../models/'
+import Role from "../models/Role";
 
 const JWT_SECRET = process.env.JWT_SECRET || 'YOUR_SUPER_SECRET_KEY';
 const SUPER_ADMIN = process.env.SUPER_ADMIN_NAME || 'SUPER_ADMIN';
 const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN';
 
-async function checkUserPermission(user: Express.Request['user'], requiredPermission: string): Promise<boolean> {
-    if (!user) return false;
-
-    if (user.roles.includes(SUPER_ADMIN)) {
-        return true;
-    }
-
-    // Placeholder pour une logique de permission plus fine basée sur db.Permission si nécessaire
-    console.warn(`Permission check failed for user ${user.id}. Required: ${requiredPermission}. Roles: ${user.roles.join(', ')} (Admin check failed).`);
-    return false;
-}
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
@@ -52,7 +40,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
         });
 
         if (!user || !user.is_active) { return next(new AuthenticationError('User not found or inactive.')); }
-        const roleNames = user.roles ? user.roles.map(role => role.name) : [];
+        const roleNames = user.roles ? user.roles.map((role: Role) => role.name) : [];
         req.user = { id: user.id, username: user.username, email: user.email, is_active: user.is_active, roles: roleNames };
         next();
     } catch (error) {
@@ -560,7 +548,7 @@ export const loadTimeOffRequestAndVerifyAccessDetails = (
             }
 
 
-            if (allowSelfOnResource && req.actorMembershipInTargetContext.id === req.targetTimeOffRequest.membershipId) {
+            if (allowSelfOnResource && req.targetTimeOffRequest && req.actorMembershipInTargetContext.id === req.targetTimeOffRequest.membershipId) {
                 return next();
             }
 

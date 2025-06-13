@@ -74,7 +74,7 @@ export async function up(queryInterface: QueryInterface, sequelize: Sequelize): 
  * @param {QueryInterface} queryInterface - L'interface de requête Sequelize.
  * @param {Sequelize} sequelize - L'instance Sequelize.
  */
-export async function down(queryInterface: QueryInterface, sequelize: Sequelize): Promise<void> {
+export async function down(queryInterface: QueryInterface): Promise<void> {
     // Il n'est généralement pas nécessaire de supprimer les index explicitement avant dropTable,
     // mais si vous préférez être explicite :
     // await queryInterface.removeIndex('availability_rules', 'unique_establishment_day');

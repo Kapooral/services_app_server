@@ -1,9 +1,10 @@
 // src/seeders/YYYYMMDDHHMMSS-update-countries-with-timezoneid.ts
-import {QueryInterface, Sequelize, Transaction, Op} from 'sequelize';
+import {QueryInterface, Transaction} from 'sequelize';
 import moment from 'moment-timezone';
 import fs from 'fs';
 import path from 'path';
-import db from '../models'; // Pour accéder aux modèles Country et Timezone
+import db from '../models';
+import Timezone from "../models/Timezone"; // Pour accéder aux modèles Country et Timezone
 
 // Interface pour la structure attendue des objets pays dans le JSON
 interface CountryJsonEntry {
@@ -13,7 +14,7 @@ interface CountryJsonEntry {
 }
 
 module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async up(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             console.log('Starting to update countries with timezone IDs...');
@@ -31,7 +32,7 @@ module.exports = {
             // 2. Récupérer tous les timezones de la BDD pour un mapping rapide nom -> id
             const allTimezonesDb = await db.Timezone.findAll({attributes: ['id', 'name'], transaction});
             const timezoneMap = new Map<string, number>();
-            allTimezonesDb.forEach(tz => {
+            allTimezonesDb.forEach((tz: Timezone) => {
                 timezoneMap.set(tz.name, tz.id);
             });
             console.log(`Loaded ${timezoneMap.size} timezones from database for mapping.`);
@@ -106,7 +107,7 @@ module.exports = {
         }
     },
 
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async down(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             console.log('Reverting timezoneId for all countries to NULL...');

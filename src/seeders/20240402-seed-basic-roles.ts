@@ -1,7 +1,7 @@
 // YYYYMMDDHHMMSS-basic-roles.ts
 'use strict';
 
-import { QueryInterface, Sequelize as SequelizeStatic, QueryTypes, Op } from 'sequelize';
+import { QueryInterface, QueryTypes, Op } from 'sequelize';
 
 const rolesToCreate = [
     { name: 'CLIENT', description: 'Standard user with basic permissions.', created_at: new Date(), updated_at: new Date() },
@@ -15,7 +15,7 @@ interface RoleNameResult {
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-    async up (queryInterface: QueryInterface, Sequelize: SequelizeStatic) {
+    async up (queryInterface: QueryInterface) {
         console.log('Seeding basic roles...');
 
         const roleNames = rolesToCreate.map(role => role.name);
@@ -50,7 +50,7 @@ module.exports = {
         }
     },
 
-    async down (queryInterface: QueryInterface, Sequelize: SequelizeStatic) {
+    async down (queryInterface: QueryInterface) {
         console.log('Removing basic roles...');
         const roleNamesToRemove = rolesToCreate.map(role => role.name);
 

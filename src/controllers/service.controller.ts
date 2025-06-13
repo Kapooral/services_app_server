@@ -8,8 +8,6 @@ import {
     mapToAdminServiceDto, mapToPublicServiceDto
 } from '../dtos/service.validation';
 import { AppError } from '../errors/app.errors';
-import { AuthenticationError } from '../errors/auth.errors';
-import { ServiceNotFoundError } from '../errors/service.errors';
 // EstablishmentNotFoundError n'est plus nécessaire ici si le service le gère
 
 export class ServiceController {

@@ -15,7 +15,7 @@ import { UserController } from '../controllers/user.controller';
 import { BookingController } from '../controllers/booking.controller'; // Pour /users/me/bookings
 
 // Importer les middlewares
-import { requireAuth, ensureSelf, requireRole } from '../middlewares/auth.middleware';
+import { requireAuth, ensureSelf } from '../middlewares/auth.middleware';
 import { verifyCsrfToken } from '../middlewares/csrf.middleware';
 
 // Importer les créateurs de sous-routeurs pour /me/establishments/...
@@ -25,7 +25,6 @@ import {MembershipService} from "../services/membership.service";
 
 // Options Multer pour la photo de profil utilisateur
 const profilePictureUpload = multer(fileService.multerOptions).single('profilePicture');
-const ESTABLISHMENT_ADMIN_ROLE_NAME = 'ESTABLISHMENT_ADMIN'; // Si besoin pour des routes user spécifiques
 
 export const createUserRouter = (
     // Déclarer toutes les dépendances nécessaires

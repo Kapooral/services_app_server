@@ -1,5 +1,5 @@
 // src/seeders/YYYYMMDDHHMMSS-seed-users.ts
-import { QueryInterface, Sequelize, Transaction, Op } from 'sequelize'; // Importer Op
+import { QueryInterface, Transaction, Op } from 'sequelize'; // Importer Op
 import bcrypt from 'bcrypt';
 import { faker } from '@faker-js/faker';
 import db from '../models';
@@ -10,7 +10,7 @@ const NUMBER_OF_USERS_TO_SEED = 20;
 const STARTING_USER_ID = 2;
 
 module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async up(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             const usersToCreate = [];
@@ -79,7 +79,7 @@ module.exports = {
         }
     },
 
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async down(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             const userIdsToDelete = Array.from({ length: NUMBER_OF_USERS_TO_SEED }, (_, i) => STARTING_USER_ID + i);

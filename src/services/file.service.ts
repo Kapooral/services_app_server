@@ -20,7 +20,7 @@ export class FileService {
     private async ensureUploadDirExists(): Promise<void> {
         try {
             await fs.access(UPLOAD_DIR);
-        } catch (error) {
+        } catch (e) {
             console.log(`Upload directory ${UPLOAD_DIR} does not exist, creating...`);
             try {
                 await fs.mkdir(UPLOAD_DIR, { recursive: true });

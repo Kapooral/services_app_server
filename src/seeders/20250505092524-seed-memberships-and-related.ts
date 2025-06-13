@@ -1,8 +1,8 @@
 // src/seeders/YYYYMMDDHHMMSS-seed-memberships-and-related.ts
-import {QueryInterface, Sequelize, Transaction, Op} from 'sequelize';
-import {faker} from '@faker-js/faker';
+import {QueryInterface, Transaction, Op} from 'sequelize';
+
 import db from '../models';
-import {MembershipRole, MembershipStatus} from '../models/Membership';
+import Membership, {MembershipRole, MembershipStatus} from '../models/Membership';
 
 // --- Configuration (Identique) ---
 const NUMBER_OF_STAFF_PER_ESTABLISHMENT = 15;
@@ -12,7 +12,7 @@ const SERVICE_IDS_TO_ASSIGN = [1, 2];
 // --- Fin Configuration ---
 
 module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async up(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             const membershipsToCreate = [];
@@ -65,7 +65,7 @@ module.exports = {
                     transaction
                 });
 
-                seededMembershipIds = insertedMemberships.map(m => m.id);
+                seededMembershipIds = insertedMemberships.map((m: Membership) => m.id);
                 // =======================================================
 
                 if (seededMembershipIds.length !== membershipsToCreate.length) {
@@ -191,7 +191,7 @@ module.exports = {
         }
     },
 
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async down(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             const userIdsToDelete = Array.from({length: NUMBER_OF_STAFF_PER_ESTABLISHMENT}, (_, i) => FIRST_USER_ID_FOR_STAFF + i);
@@ -205,7 +205,7 @@ module.exports = {
                 attributes: ['id'],
                 transaction
             });
-            const membershipIdsToDelete = membershipsToDelete.map(m => m.id);
+            const membershipIdsToDelete = membershipsToDelete.map((m: Membership) => m.id);
 
             if (membershipIdsToDelete.length > 0) {
                 console.log('Unassigning bookings...');

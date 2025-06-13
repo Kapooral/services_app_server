@@ -1,6 +1,6 @@
 // src/types/express-rate-limit/index.d.ts
 declare module 'express-rate-limit' {
-    import { RequestHandler } from 'express';
+    import {Request, Response, NextFunction, RequestHandler} from 'express';
 
     export interface RateLimitOptions {
         windowMs?: number;
@@ -10,8 +10,8 @@ declare module 'express-rate-limit' {
         headers?: boolean;
         skipFailedRequests?: boolean;
         skipSuccessfulRequests?: boolean;
-        keyGenerator?(req: any, res: any): string;
-        handler?(req: any, res: any, next: any, options: RateLimitOptions): void;
+        keyGenerator?(req: Request, res: Response): string;
+        handler?(req: Request, res: Response, next: NextFunction, options: RateLimitOptions): void;
     }
 
     function rateLimit(options?: RateLimitOptions): RequestHandler;

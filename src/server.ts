@@ -1,6 +1,6 @@
 // src/server.ts
 import path from 'path';
-import express, { Router } from 'express'; // Ajout de Router ici
+import express from 'express'; // Ajout de Router ici
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
@@ -22,13 +22,13 @@ import { encryptionService } from './services/encryption.service'; // Implicitem
 import { createUserRouter } from './routes/user.routes';
 import { createAuthRouter } from './routes/auth.routes';
 import { createEstablishmentRouter } from './routes/establishment.routes';
-import { createServiceRouter, ServiceRouters } from './routes/service.routes'; // L'interface ServiceRouters est déjà importée
+import { createServiceRouter } from './routes/service.routes'; // L'interface ServiceRouters est déjà importée
 import { createAvailabilityRouter } from './routes/availability.routes';
 import { createBookingRouter } from './routes/booking.routes';
 import membershipRouter from './routes/membership.routes';
 // createMyEstablishmentsRootRouter et createMyEstablishmentRouter sont utilisés DANS user.routes.ts, pas ici directement.
 
-import errorMiddleware from './middlewares/error.middleware';
+import { globalErrorHandler } from './middlewares/error.middleware';
 import { apiLimiter } from './middlewares/rateLimiter.middleware';
 
 dotenv.config();
@@ -38,11 +38,11 @@ const app = express();
 if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
     db.sequelize.sync({ alter: false }) // Utiliser { force: true } pour reset en dev si besoin, mais alter: false est plus sûr
         .then(() => console.log('Database synchronized (alter: false)'))
-        .catch(err => console.error('Database sync error:', err));
+        .catch((e: unknown) => console.error('Database sync error:', e));
 } else if (process.env.NODE_ENV !== 'test') {
     db.sequelize.authenticate()
         .then(() => console.log('Database connection verified.'))
-        .catch(err => console.error('Unable to connect to the database:', err));
+        .catch((e: unknown) => console.error('Unable to connect to the database:', e));
 }
 
 // Instanciation des services avec injection des dépendances
@@ -124,7 +124,7 @@ app.use('/api/bookings', bookingRouter);
 app.use('/api/memberships', membershipRouter); // Monte /api/memberships/invitation-details/:token et /api/memberships/activate-after-login
 
 // Middleware de Gestion des Erreurs (doit être le dernier)
-app.use(errorMiddleware);
+app.use(globalErrorHandler);
 
 // Démarrage du serveur
 const PORT = process.env.PORT || 3001;

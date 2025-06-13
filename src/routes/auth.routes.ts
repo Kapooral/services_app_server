@@ -1,12 +1,11 @@
 // src/routes/auth.routes.ts
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { AuthService } from '../services/auth.service';
-import { loginInitiateLimiter, sendCodeLimiter, verifyCodeLimiter } from '../middlewares/rateLimiter.middleware';
+
 import { UserService } from '../services/user.service';
 import { requireAuth } from '../middlewares/auth.middleware'; // Importer le middleware
 
-const PRE_2FA_TOKEN_HEADER_LOWER = 'x-pre-2fa-token';
 
 export const createAuthRouter = (authService: AuthService, userService: UserService): Router => {
     const router = Router();

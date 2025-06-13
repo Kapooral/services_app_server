@@ -1,15 +1,14 @@
 // src/services/availability.service.ts
-import { ModelCtor, WhereOptions, Op } from 'sequelize';
-import { RRule, RRuleSet, Options as RRuleOptions, Frequency, Weekday  } from 'rrule';
+import { ModelCtor, Op } from 'sequelize';
+
 import moment from 'moment-timezone';
 import db from '../models';
-import Establishment, { EstablishmentAttributes } from '../models/Establishment';
+import Establishment from '../models/Establishment';
 import AvailabilityRule from '../models/AvailabilityRule';
 import AvailabilityOverride from '../models/AvailabilityOverride';
 import Service from '../models/Service';
-import Booking, { BookingAttributes, BookingStatus } from '../models/Booking';
-import TimeOffRequest, { TimeOffRequestStatus } from '../models/TimeOffRequest';
-import StaffAvailability, { StaffAvailabilityAttributes } from '../models/StaffAvailability';
+import Booking, { BookingStatus } from '../models/Booking';
+
 import { ServiceNotFoundError } from '../errors/service.errors';
 import { EstablishmentNotFoundError } from '../errors/establishment.errors';
 import { AppError } from '../errors/app.errors';
@@ -27,8 +26,6 @@ export class AvailabilityService {
     private availabilityOverrideModel: ModelCtor<AvailabilityOverride>;
     private serviceModel: ModelCtor<Service>;
     private bookingModel: ModelCtor<Booking>;
-    private timeOffRequestModel: ModelCtor<TimeOffRequest>;
-    private staffAvailabilityModel: ModelCtor<StaffAvailability>;
 
     constructor() {
         this.establishmentModel = db.Establishment;
@@ -36,8 +33,6 @@ export class AvailabilityService {
         this.availabilityOverrideModel = db.AvailabilityOverride;
         this.serviceModel = db.Service;
         this.bookingModel = db.Booking;
-        this.timeOffRequestModel = db.TimeOffRequest;
-        this.staffAvailabilityModel = db.StaffAvailability;
     }
 
     private subtractInterval(intervals: TimeInterval[], toSubtract: TimeInterval): TimeInterval[] {
@@ -86,173 +81,6 @@ export class AvailabilityService {
         return { dayStartUTC, dayEndUTC };
     }
 
-    private cleanRRuleOptions(
-        originalRRuleString: string,
-        parsedOptions: Partial<RRuleOptions>, // Options issues de RRule.parseString()
-        staffRuleContext?: { id: number | string; effectiveStartDate: string; },
-        establishmentTimezoneForContext?: string
-    ): RRuleOptions | null {
-        const logPrefix = `[AVAIL_SVC_CLEAN_OPTS_R${staffRuleContext?.id}]`;
-        console.log(`${logPrefix} START. originalRRuleString: "${originalRRuleString}", establishmentTimezone: ${establishmentTimezoneForContext}`);
-        console.log(`${logPrefix} parsedOptions input from RRule.parseString():`, JSON.stringify(parsedOptions));
-
-        const options: Partial<RRuleOptions> = { ...parsedOptions }; // Copie pour modifications locales
-        let processedDtStart: Date | undefined = undefined;
-        let processedUntil: Date | null = null; // Reste null si non défini
-
-        // --- Analyse de DTSTART et UNTIL à partir de originalRRuleString ---
-        let dtStartValueFromOriginal: string | undefined;
-        let dtStartTzidFromOriginal: string | undefined;
-        // Regex pour capturer DTSTART, son TZID optionnel, et la valeur date/heure
-        const dtStartMatch = originalRRuleString.match(/DTSTART(?:;TZID=([^:=;]+))?(?::|=)([0-9T]+)/);
-        if (dtStartMatch) {
-            dtStartTzidFromOriginal = dtStartMatch[1]; // Groupe 1: TZID (peut être undefined)
-            dtStartValueFromOriginal = dtStartMatch[2]; // Groupe 2: Valeur date/heure
-        }
-
-        let untilValueFromOriginal: string | undefined;
-        let untilTzidFromOriginal: string | undefined; // UNTIL peut aussi avoir un TZID
-        const untilMatch = originalRRuleString.match(/UNTIL(?:;TZID=([^:=;]+))?(?::|=)([0-9T]+)/);
-        if (untilMatch) {
-            untilTzidFromOriginal = untilMatch[1];
-            untilValueFromOriginal = untilMatch[2];
-        }
-        console.log(`${logPrefix} Extracted from original string - DTSTART: ${dtStartValueFromOriginal}, TZID: ${dtStartTzidFromOriginal}`);
-        console.log(`${logPrefix} Extracted from original string - UNTIL: ${untilValueFromOriginal}, TZID: ${untilTzidFromOriginal}`);
-
-
-        // --- Traitement de dtstart ---
-        console.log(`${logPrefix} --- Processing dtstart ---`);
-        if (dtStartValueFromOriginal) {
-            if (!dtStartValueFromOriginal.endsWith('Z') && !dtStartTzidFromOriginal && establishmentTimezoneForContext) {
-                processedDtStart = moment.tz(dtStartValueFromOriginal, "YYYYMMDDTHHmmss", establishmentTimezoneForContext).toDate();
-                console.log(`${logPrefix} dtstart (original local): Interpreted "${dtStartValueFromOriginal}" in timezone "${establishmentTimezoneForContext}" to UTC: ${processedDtStart?.toISOString()}`);
-            } else if (dtStartTzidFromOriginal) {
-                processedDtStart = moment.tz(dtStartValueFromOriginal, "YYYYMMDDTHHmmss", dtStartTzidFromOriginal).toDate();
-                options.tzid = dtStartTzidFromOriginal; // Propager le tzid extrait aux options finales
-                console.log(`${logPrefix} dtstart (original with TZID): Interpreted "${dtStartValueFromOriginal}" in timezone "${dtStartTzidFromOriginal}" to UTC: ${processedDtStart?.toISOString()}. RRule tzid set to: ${options.tzid}`);
-            } else {
-                if (parsedOptions.dtstart instanceof Date) {
-                    processedDtStart = parsedOptions.dtstart;
-                } else if (typeof parsedOptions.dtstart === 'string') {
-                    processedDtStart = moment(parsedOptions.dtstart).toDate();
-                }
-                console.log(`${logPrefix} dtstart (original UTC/Z or no explicit TZID in string but context might be missing): Used value from RRule.parseString: ${processedDtStart?.toISOString()}`);
-            }
-        } else if (parsedOptions.dtstart instanceof Date) {
-            processedDtStart = parsedOptions.dtstart;
-            console.log(`${logPrefix} dtstart: No DTSTART in original string, used Date from RRule.parseString: ${processedDtStart?.toISOString()}`);
-        } else if (typeof parsedOptions.dtstart === 'string') { // Si RRule.parseString retourne une string ISO
-            processedDtStart = moment(parsedOptions.dtstart).toDate();
-            console.log(`${logPrefix} dtstart: No DTSTART in original string, used string from RRule.parseString: ${processedDtStart?.toISOString()}`);
-        }
-
-        // Fallbacks pour dtstart si toujours non défini
-        if (!(processedDtStart instanceof Date) && staffRuleContext && staffRuleContext.effectiveStartDate && establishmentTimezoneForContext) {
-            // staffRuleContext.effectiveStartDate est maintenant de type string (YYYY-MM-DD)
-            // donc plus besoin de la vérification instanceof Date ni du formatage avec moment().format()
-            const effStartDateStr = staffRuleContext.effectiveStartDate; // C'est déjà une chaîne YYYY-MM-DD
-
-            processedDtStart = moment.tz(effStartDateStr, 'YYYY-MM-DD', establishmentTimezoneForContext).startOf('day').toDate();
-            console.log(`${logPrefix} dtstart: Fallback to effectiveStartDate of rule (${effStartDateStr} in ${establishmentTimezoneForContext}): ${processedDtStart?.toISOString()}`);
-        }
-        if (!(processedDtStart instanceof Date)) {
-            console.error(`${logPrefix} [AVAIL_SVC_CLEAN_DTSTART_ERROR] RRule options for StaffAvailability ID ${staffRuleContext?.id}: dtstart is invalid after all processing. Original: "${originalRRuleString}". Defaulting to current date.`);
-            processedDtStart = moment().startOf('day').toDate(); // Defaulting to now, might not be ideal but ensures a Date
-        }
-        console.log(`${logPrefix} Final processedDtStart: ${processedDtStart?.toISOString()}`);
-
-
-        // --- Traitement de until --- (logique similaire à dtstart)
-        console.log(`${logPrefix} --- Processing until ---`);
-        if (untilValueFromOriginal) {
-            if (!untilValueFromOriginal.endsWith('Z') && !untilTzidFromOriginal && establishmentTimezoneForContext) {
-                processedUntil = moment.tz(untilValueFromOriginal, "YYYYMMDDTHHmmss", establishmentTimezoneForContext).toDate();
-                console.log(`${logPrefix} until (original local): Interpreted "${untilValueFromOriginal}" in timezone "${establishmentTimezoneForContext}" to UTC: ${processedUntil?.toISOString()}`);
-            } else if (untilTzidFromOriginal) {
-                processedUntil = moment.tz(untilValueFromOriginal, "YYYYMMDDTHHmmss", untilTzidFromOriginal).toDate();
-                // Si DTSTART a un TZID, RRule l'utilise pour UNTIL aussi. Pas besoin de setter options.tzid ici si dtstart en avait déjà un.
-                // Si seul UNTIL a un TZID, c'est un cas étrange mais on respecte.
-                if (!options.tzid) options.tzid = untilTzidFromOriginal;
-                console.log(`${logPrefix} until (original with TZID): Interpreted "${untilValueFromOriginal}" in timezone "${untilTzidFromOriginal}" to UTC: ${processedUntil?.toISOString()}`);
-            } else {
-                if (parsedOptions.until instanceof Date) {
-                    processedUntil = parsedOptions.until;
-                } else if (typeof parsedOptions.until === 'string') {
-                    processedUntil = moment(parsedOptions.until).toDate();
-                }
-                console.log(`${logPrefix} until (original UTC/Z or no context): Used value from RRule.parseString: ${processedUntil?.toISOString()}`);
-            }
-        } else if (parsedOptions.until instanceof Date) {
-            processedUntil = parsedOptions.until;
-            console.log(`${logPrefix} until: No UNTIL in original string, used Date from RRule.parseString: ${processedUntil?.toISOString()}`);
-        } else if (typeof parsedOptions.until === 'string') { // Si RRule.parseString retourne une string ISO
-            processedUntil = moment(parsedOptions.until).toDate();
-            console.log(`${logPrefix} until: No UNTIL in original string, used string from RRule.parseString: ${processedUntil?.toISOString()}`);
-        }
-        console.log(`${logPrefix} Final processedUntil: ${processedUntil?.toISOString()}`);
-
-
-        // --- freq ---
-        console.log(`${logPrefix} --- Processing freq ---`);
-        let freqValue = options.freq;
-        const ruleIdForFreqLog = staffRuleContext ? `for StaffAvailability ID ${staffRuleContext.id}` : '(unknown rule)';
-        console.log(`${logPrefix} Initial options.freq ${ruleIdForFreqLog}:`, freqValue);
-
-        if (freqValue === undefined || freqValue === null) {
-            // Si freq est absente, RRule.js essaie de l'inférer depuis les options BY*.
-            // Si aucune option BY* n'est présente pour inférer, RRule() lèvera une erreur.
-            // On logue seulement si nous aussi ne pouvons pas l'inférer (même si notre inférence ici est basique).
-            if (!options.byweekday && !options.bymonthday && !options.byyearday && !options.byweekno && !options.bymonth) {
-                console.error(`${logPrefix} [AVAIL_SVC_CLEAN_FREQ_ERROR] RRule options ${ruleIdForFreqLog}: frequency (freq) is missing and cannot be inferred. The rrule string was: "${originalRRuleString}".`);
-                return null; // Règle invalide, ne pas continuer.
-            }
-        }
-        // Si freqValue est fournie mais invalide
-        if (freqValue !== undefined && freqValue !== null && (typeof freqValue !== 'number' || !Object.values(Frequency).includes(freqValue as Frequency))) {
-            console.error(`${logPrefix} [AVAIL_SVC_CLEAN_FREQ_ERROR] Invalid RRule frequency value for ${ruleIdForFreqLog}: ${freqValue}. The rrule string was: "${originalRRuleString}".`);
-            return null; // Règle invalide.
-        }
-        console.log(`${logPrefix} Final freqValue for RRule constructor (can be undefined if inferable by RRule lib) ${ruleIdForFreqLog}:`, freqValue);
-
-        // Helper pour normaliser les valeurs optionnelles vers T | null
-        const normalize = <T>(value: T | null | undefined): T | null => {
-            return value === undefined ? null : value;
-        };
-
-        // Construction de l'objet final en respectant RRuleOptions
-        const finalRuleOptions: RRuleOptions = {
-            dtstart: processedDtStart as Date, // Assuré d'être une Date par les fallbacks
-            until: processedUntil,             // Date | null
-            freq: freqValue as Frequency,      // Peut être undefined, RRule gérera
-
-            // Options avec des valeurs par défaut ou normalisées
-            interval: options.interval === undefined ? 1 : options.interval,
-            wkst: normalize(options.wkst as Weekday | number | null), // Cast pour la clarté, normalize gère undefined
-            count: normalize(options.count),
-            bysetpos: normalize(options.bysetpos),
-            bymonth: normalize(options.bymonth),
-            bymonthday: normalize(options.bymonthday),
-            bynmonthday: normalize(options.bynmonthday), // Peut être un array de numéros négatifs
-            byyearday: normalize(options.byyearday),
-            byweekno: normalize(options.byweekno),
-            byweekday: normalize(options.byweekday as Weekday | Weekday[] | null), // Weekday[] si plusieurs jours
-
-            // Options souvent nulles par défaut si non présentes dans la rruleString
-            byhour: normalize(options.byhour),
-            byminute: normalize(options.byminute),
-            bysecond: normalize(options.bysecond),
-
-            // Propriétés requises par TS2739
-            tzid: normalize(options.tzid), // Sera null si options.tzid est undefined
-            bynweekday: normalize(options.bynweekday as Array<[number, number]> | null), // Type plus précis [number, number][] | null
-            byeaster: normalize(options.byeaster),
-        };
-
-        console.log(`${logPrefix} Returning final RRule options:`, JSON.stringify(finalRuleOptions));
-        return finalRuleOptions;
-    }
-
     private async getEstablishmentOpenIntervalsUTC(
         establishmentId: number,
         dateString: string, // YYYY-MM-DD
@@ -296,112 +124,6 @@ export class AvailabilityService {
             }
         }
         return this.mergeIntervals(openIntervals);
-    }
-
-    private async getMemberNetWorkingPeriodsUTC(
-        membershipId: number,
-        queryStartUTC: Date,
-        queryEndUTC: Date,
-        establishmentTimezone: string
-    ): Promise<TimeInterval[]> {
-        console.log(`[getMemberNetWorkingPeriodsUTC] Args: membershipId=${membershipId}, queryStartUTC=${queryStartUTC.toISOString()}, queryEndUTC=${queryEndUTC.toISOString()}, establishmentTimezone=${establishmentTimezone}`);
-
-        const memberStaffAvailabilities = await this.staffAvailabilityModel.findAll({
-            where: {
-                membershipId: membershipId,
-                effectiveStartDate: { [Op.lte]: moment(queryEndUTC).format('YYYY-MM-DD') },
-                [Op.or]: [
-                    { effectiveEndDate: { [Op.gte]: moment(queryStartUTC).format('YYYY-MM-DD') } },
-                    { effectiveEndDate: null }
-                ]
-            }
-        });
-        console.log(`[getMemberNetWorkingPeriodsUTC] Found ${memberStaffAvailabilities.length} staff availabilities for member ${membershipId}.`);
-
-        let workingIntervals: TimeInterval[] = [];
-        let nonWorkingStaffRuleIntervals: TimeInterval[] = [];
-
-        for (const staffRule of memberStaffAvailabilities) {
-            console.log(`[getMemberNetWorkingPeriodsUTC] Processing staffRule ID: ${staffRule.id}, rruleString: "${staffRule.rruleString}"`);
-            try {
-                const rruleOptionsFromStr: Partial<RRuleOptions> = RRule.parseString(staffRule.rruleString);
-                console.log(`[getMemberNetWorkingPeriodsUTC] Parsed options from rruleString for rule ${staffRule.id}:`, JSON.stringify(rruleOptionsFromStr, null, 2));
-
-                const finalRRuleOptions = this.cleanRRuleOptions(
-                    staffRule.rruleString,
-                    rruleOptionsFromStr,
-                    {
-                        id: staffRule.id,
-                        // staffRule.effectiveStartDate est déjà une string YYYY-MM-DD
-                        effectiveStartDate: staffRule.effectiveStartDate
-                    },
-                    establishmentTimezone
-                );
-                console.log(`[getMemberNetWorkingPeriodsUTC] Final RRuleOptions for rule ${staffRule.id}:`, JSON.stringify(finalRRuleOptions, null, 2));
-
-
-                if (finalRRuleOptions && !(finalRRuleOptions.dtstart instanceof Date)) {
-                    console.error(`[getMemberNetWorkingPeriodsUTC] Skipped rule ${staffRule.id} due to invalid dtstart after cleaning.`);
-                    continue;
-                }
-                if (!finalRRuleOptions) {
-                    console.log(`[AVAIL_SVC_GET_PERIODS_LOOP] Skipping staffRule ID ${staffRule.id} due to invalid rrule options (e.g., missing freq) indicated by cleanRRuleOptions returning null.`);
-                    continue; // Passer à la staffRule suivante
-                }
-
-                console.log(`[AVAIL_SVC_GET_PERIODS_LOOP] About to create RRule for rule ID ${staffRule.id} with options:`, JSON.stringify(finalRRuleOptions));
-                const rule = new RRule(finalRRuleOptions);
-                console.log(`[getMemberNetWorkingPeriodsUTC] RRule object created for rule ${staffRule.id}. Calling between(${queryStartUTC.toISOString()}, ${queryEndUTC.toISOString()})`);
-                const occurrencesUTC = rule.between(queryStartUTC, queryEndUTC, true);
-                console.log(`[getMemberNetWorkingPeriodsUTC] Found ${occurrencesUTC.length} occurrences for rule ${staffRule.id}`);
-
-                for (const occUTC of occurrencesUTC) {
-                    const occurrenceStartUTC = new Date(occUTC);
-                    const occurrenceEndUTC = new Date(occurrenceStartUTC.getTime() + staffRule.durationMinutes * 60000);
-                    console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Raw Occurrence: Start=${occurrenceStartUTC.toISOString()}, End=${occurrenceEndUTC.toISOString()}`);
-
-                    const ruleEffectiveStartUTC = moment(staffRule.effectiveStartDate).tz(establishmentTimezone).startOf('day').utc().toDate();
-                    const ruleEffectiveEndUTC = staffRule.effectiveEndDate ? moment(staffRule.effectiveEndDate).tz(establishmentTimezone).endOf('day').utc().toDate() : null;
-                    console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Effective UTC: Start=${ruleEffectiveStartUTC.toISOString()}, End=${ruleEffectiveEndUTC ? ruleEffectiveEndUTC.toISOString() : 'null'}`);
-
-                    let validStart = occurrenceStartUTC < ruleEffectiveStartUTC ? ruleEffectiveStartUTC : occurrenceStartUTC;
-                    let validEnd = ruleEffectiveEndUTC && occurrenceEndUTC > ruleEffectiveEndUTC ? ruleEffectiveEndUTC : occurrenceEndUTC;
-
-                    console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Clamped Occurrence: validStart=${validStart.toISOString()}, validEnd=${validEnd.toISOString()}`);
-
-                    if (validEnd <= ruleEffectiveStartUTC || (ruleEffectiveEndUTC && validStart >= ruleEffectiveEndUTC)) {
-                        console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Occurrence outside effective period. Skipping.`);
-                        continue;
-                    }
-                    if (validStart >= validEnd) {
-                        console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Occurrence has invalid duration after clamping (start >= end). Skipping.`);
-                        continue;
-                    }
-
-                    if (staffRule.isWorking) {
-                        workingIntervals.push({ start: validStart, end: validEnd });
-                        console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Added to workingIntervals:`, { start: validStart.toISOString(), end: validEnd.toISOString() });
-                    } else {
-                        nonWorkingStaffRuleIntervals.push({ start: validStart, end: validEnd });
-                        console.log(`[getMemberNetWorkingPeriodsUTC] Rule ${staffRule.id} - Added to nonWorkingStaffRuleIntervals:`, { start: validStart.toISOString(), end: validEnd.toISOString() });
-                    }
-                }
-
-            } catch (e) {
-                console.error(`[getMemberNetWorkingPeriodsUTC] Error processing rrule for StaffAvailability ID ${staffRule.id}: "${staffRule.rruleString}"`, e);
-            }
-        }
-
-        console.log('[getMemberNetWorkingPeriodsUTC] workingIntervals before merge/subtract:', JSON.stringify(workingIntervals.map(i => ({s:i.start.toISOString(), e:i.end.toISOString()})), null, 2));
-        console.log('[getMemberNetWorkingPeriodsUTC] nonWorkingStaffRuleIntervals before merge/subtract:', JSON.stringify(nonWorkingStaffRuleIntervals.map(i => ({s:i.start.toISOString(), e:i.end.toISOString()})), null, 2));
-
-        let netWorkingPeriods = this.mergeIntervals(workingIntervals);
-        console.log('[getMemberNetWorkingPeriodsUTC] netWorkingPeriods after merging workingIntervals:', JSON.stringify(netWorkingPeriods.map(i => ({s:i.start.toISOString(), e:i.end.toISOString()})), null, 2));
-        for (const nonWorking of nonWorkingStaffRuleIntervals) {
-            netWorkingPeriods = this.subtractInterval(netWorkingPeriods, nonWorking);
-        }
-        console.log('[getMemberNetWorkingPeriodsUTC] Final netWorkingPeriods to be returned:', JSON.stringify(netWorkingPeriods.map(i => ({s:i.start.toISOString(), e:i.end.toISOString()})), null, 2));
-        return netWorkingPeriods;
     }
 
     async getAvailableSlots(serviceId: number, dateString: string): Promise<string[]> {
@@ -461,72 +183,5 @@ export class AvailabilityService {
         const uniqueSlots = Array.from(new Set(availableSlots.map(d => d.getTime()))).map(time => new Date(time));
         uniqueSlots.sort((a, b) => a.getTime() - b.getTime());
         return uniqueSlots.map(slot => slot.toISOString());
-    }
-
-    async isMemberAvailableForSlot(
-        membershipId: number,
-        slotStartDateTimeUTC: Date,
-        slotEndDateTimeUTC: Date,
-        establishmentTimezone: string,
-        bookingIdToExclude?: number
-    ): Promise<{ available: boolean; reason?: string; conflictingBookings?: BookingAttributes[] }> {
-        if (!establishmentTimezone) {
-            throw new AppError('ConfigurationError', 500, 'Establishment timezone is required for member availability check.');
-        }
-
-        const slotDateStringInEstTZ = moment(slotStartDateTimeUTC).tz(establishmentTimezone).format('YYYY-MM-DD');
-        const { dayStartUTC: queryWindowStartUTC, dayEndUTC: queryWindowEndUTC } = this.getDayBoundariesInUTC(slotDateStringInEstTZ, establishmentTimezone);
-
-        const memberNetWorkingPeriodsUTC = await this.getMemberNetWorkingPeriodsUTC(
-            membershipId, queryWindowStartUTC, queryWindowEndUTC, establishmentTimezone
-        );
-
-        const isWithinNetWorkingHours = memberNetWorkingPeriodsUTC.some(period =>
-            slotStartDateTimeUTC.getTime() >= period.start.getTime() && slotEndDateTimeUTC.getTime() <= period.end.getTime()
-        );
-
-        if (!isWithinNetWorkingHours) {
-            return { available: false, reason: 'Member is not scheduled to work during this time based on their StaffAvailability rules.' };
-        }
-
-        const slotStartDateInEstTZ_forTimeOff = moment(slotStartDateTimeUTC).tz(establishmentTimezone).format('YYYY-MM-DD');
-        const slotEndDateInEstTZ_forTimeOff = moment(slotEndDateTimeUTC).subtract(1, 'millisecond').tz(establishmentTimezone).format('YYYY-MM-DD');
-
-        const approvedTimeOff = await this.timeOffRequestModel.findOne({
-            where: {
-                membershipId: membershipId,
-                status: TimeOffRequestStatus.APPROVED,
-                startDate: { [Op.lte]: slotEndDateInEstTZ_forTimeOff },
-                endDate: { [Op.gte]: slotStartDateInEstTZ_forTimeOff },
-            }
-        });
-
-        if (approvedTimeOff) {
-            const timeOffDayStartUTC = moment.tz(approvedTimeOff.startDate, 'YYYY-MM-DD', establishmentTimezone).startOf('day').utc().toDate();
-            const timeOffDayEndUTC = moment.tz(approvedTimeOff.endDate, 'YYYY-MM-DD', establishmentTimezone).endOf('day').utc().toDate();
-            if (slotStartDateTimeUTC < timeOffDayEndUTC && slotEndDateTimeUTC > timeOffDayStartUTC) {
-                return { available: false, reason: `Member has approved time off (${approvedTimeOff.type}) covering this period.` };
-            }
-        }
-
-        const whereClauseForBookings: WhereOptions<BookingAttributes> = {
-            assignedMembershipId: membershipId,
-            status: { [Op.in]: [BookingStatus.CONFIRMED, BookingStatus.PENDING_CONFIRMATION] },
-            start_datetime: { [Op.lt]: slotEndDateTimeUTC },
-            end_datetime: { [Op.gt]: slotStartDateTimeUTC },
-        };
-        if (bookingIdToExclude) {
-            whereClauseForBookings.id = { [Op.ne]: bookingIdToExclude };
-        }
-        const conflictingBookings = await this.bookingModel.findAll({ where: whereClauseForBookings });
-
-        if (conflictingBookings.length > 0) {
-            return {
-                available: false,
-                reason: `Member has ${conflictingBookings.length} other booking(s) at this time.`,
-                conflictingBookings: conflictingBookings.map(b => b.get({ plain: true }))
-            };
-        }
-        return { available: true };
     }
 }

@@ -1,9 +1,9 @@
 // src/seeders/YYYYMMDDHHMMSS-seed-timezones.ts
-import {QueryInterface, Sequelize, Transaction} from 'sequelize';
+import {QueryInterface, Transaction} from 'sequelize';
 import moment from 'moment-timezone';
 
 module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async up(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             const ianaTimezoneNames: string[] = moment.tz.names();
@@ -33,7 +33,7 @@ module.exports = {
         }
     },
 
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+    async down(queryInterface: QueryInterface): Promise<void> {
         const transaction: Transaction = await queryInterface.sequelize.transaction();
         try {
             console.log('Deleting all timezones...');

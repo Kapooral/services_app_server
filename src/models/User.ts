@@ -1,5 +1,4 @@
-import { Model, DataTypes, Optional, Sequelize, HasManyGetAssociationsMixin, BelongsToManyGetAssociationsMixin,
-    HasManyAddAssociationMixin, HasManyCountAssociationsMixin, BelongsToManyAddAssociationMixin } from 'sequelize';
+import { Model, DataTypes, Optional, Sequelize, HasManyGetAssociationsMixin, BelongsToManyGetAssociationsMixin, HasManyCountAssociationsMixin, BelongsToManyAddAssociationMixin } from 'sequelize';
 
 import RefreshToken from './RefreshToken';
 import Role from './Role';
@@ -126,6 +125,7 @@ export const initUser = (sequelize: Sequelize) => {
             underscored: true,
             indexes: [
                 { unique: true, fields: ['email'] },
+                { unique: true, fields: ['phone'] },
                 { unique: true, fields: ['username'] },
                 { unique: true, fields: ['password_reset_token'] },
                 { unique: true, fields: [ 'email_activation_token' ] }

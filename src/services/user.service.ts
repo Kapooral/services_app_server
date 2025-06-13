@@ -2,7 +2,7 @@
 import { Includeable, ModelCtor, Op } from 'sequelize';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
-import User, {UserAttributes, UserCreationAttributes} from '../models/User';
+import User, {UserAttributes} from '../models/User';
 import { fileService } from './file.service';
 import { INotificationService } from './notification.service';
 import { CreateUserDto, UpdateEmailDto, UpdateUserDto } from '../dtos/user.validation';
@@ -19,10 +19,7 @@ import {
 import { AppError } from '../errors/app.errors';
 import { AuthService } from './auth.service';
 import db from '../models/index';
-import {RegisterViaInvitationDto} from "../dtos/membership.validation";
-import {Request} from "express";
-import {AuthTokensDto} from "../dtos/auth.validation";
-import {MembershipAttributes} from "../models/Membership";
+
 import {MembershipService} from "./membership.service";
 
 

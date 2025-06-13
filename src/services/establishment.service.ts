@@ -3,8 +3,8 @@ import { ModelCtor, Op, FindOptions } from 'sequelize';
 import db from '../models'; // Garder pour accès facile aux autres modèles si besoin
 import Establishment, { EstablishmentAttributes, EstablishmentCreationAttributes } from '../models/Establishment';
 import User from '../models/User';
-import Role, { ROLES } from '../models/Role'; // Importer ROLES aussi
-import AvailabilityRule, { AvailabilityRuleAttributes } from '../models/AvailabilityRule';
+import Role from '../models/Role'; // Importer ROLES aussi
+import AvailabilityRule from '../models/AvailabilityRule';
 import AvailabilityOverride, { AvailabilityOverrideCreationAttributes } from '../models/AvailabilityOverride';
 import Country from '../models/Country'; // Importer le modèle Country
 import { CreateEstablishmentDto, UpdateEstablishmentDto } from '../dtos/establishment.validation';
@@ -30,8 +30,6 @@ import { CountryNotFoundError } from "../errors/country.errors";
 import { isAfter, addYears } from 'date-fns';
 
 import { MembershipRole, MembershipStatus } from "../models";
-
-const ESTABLISHMENT_ADMIN_ROLE_NAME = ROLES.ESTABLISHMENT_ADMIN;
 
 export class EstablishmentService {
     private establishmentModel: ModelCtor<Establishment>;

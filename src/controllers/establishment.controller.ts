@@ -1,7 +1,6 @@
 // src/controllers/establishment.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import { EstablishmentService } from '../services/establishment.service';
-import { AvailabilityService } from '../services/availability.service';
 
 import {
     CreateEstablishmentSchema, CreateEstablishmentDto,
@@ -23,7 +22,7 @@ import { ZodError } from 'zod';
 
 import { MembershipService } from '../services/membership.service';
 import {
-    InviteMemberSchema, InviteMemberDto, MembershipDto, mapToMembershipDto,
+    InviteMemberSchema, InviteMemberDto, mapToMembershipDto,
     GetMembershipsQuerySchema, GetMembershipsQueryDto
 } from '../dtos/membership.validation';
 import { MembershipAttributes } from '../models/Membership';

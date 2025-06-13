@@ -1,5 +1,5 @@
 // src/seeders/YYYYMMDDHHMMSS-seed-bookings.ts
-import {QueryInterface, Sequelize, Transaction} from 'sequelize';
+import {QueryInterface, Transaction} from 'sequelize';
 import {faker} from '@faker-js/faker';
 import db from '../models';
 import {BookingStatus, PaymentStatus} from '../models/Booking';
@@ -12,7 +12,7 @@ const TARGET_SERVICE_ID = 1; // ID du service cible
 const TARGET_ESTABLISHMENT_ID = 1;
 
 module.exports = {
-	async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+	async up(queryInterface: QueryInterface): Promise<void> {
 		const transaction: Transaction = await queryInterface.sequelize.transaction();
 		try {
 			const bookingsToCreate = [];
@@ -79,7 +79,7 @@ module.exports = {
 		}
 	},
 
-	async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+	async down(queryInterface: QueryInterface): Promise<void> {
 		const transaction: Transaction = await queryInterface.sequelize.transaction();
 		try {
 			const userIdsToDelete = Array.from({length: NUMBER_OF_USERS_SEEDED}, (_, i) => STARTING_USER_ID + i);

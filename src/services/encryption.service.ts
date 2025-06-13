@@ -3,7 +3,6 @@ import crypto from 'crypto';
 const ENCRYPTION_KEY_HEX = process.env.ENCRYPTION_KEY;
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
-const AUTH_TAG_LENGTH = 16;
 
 if (!ENCRYPTION_KEY_HEX || Buffer.from(ENCRYPTION_KEY_HEX, 'hex').length !== 32) {
     console.error("FATAL ERROR: ENCRYPTION_KEY environment variable is missing or not a 32-byte hex string.");

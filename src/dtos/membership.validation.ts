@@ -1,6 +1,6 @@
 // src/dtos/membership.validation.ts
 import { z } from 'zod';
-import Membership, { MembershipAttributes, MembershipRole, MembershipStatus } from '../models/Membership';
+import Membership, { MembershipRole, MembershipStatus } from '../models/Membership';
 import { getAbsoluteProfilePictureURL } from '../utils/url.utils';
 
 export const MembershipUserSchema = z.object({

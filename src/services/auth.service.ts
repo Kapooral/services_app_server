@@ -11,11 +11,11 @@ import RefreshToken from '../models/RefreshToken';
 import { UserService } from './user.service';
 import { INotificationService } from './notification.service';
 import { LoginInitiateDto, PreTwoFactorPayload, AccessTokenPayload, RefreshTokenPayload, AuthTokensDto, TwoFactorChallengeDto } from '../dtos/auth.validation';
-import { InvalidCredentialsError, TwoFactorRequiredError, InvalidPre2FATokenError, TwoFactorMethodUnavailableError, InvalidTwoFactorCodeError, TwoFactorNotEnabledError } from '../errors/auth.errors';
+import { InvalidCredentialsError, InvalidPre2FATokenError, TwoFactorMethodUnavailableError, InvalidTwoFactorCodeError } from '../errors/auth.errors';
 import { AppError } from '../errors/app.errors';
 import { UserNotFoundError } from '../errors/user.errors';
 import { InvitationTokenInvalidError } from '../errors/membership.errors';
-import { encryptionService, EncryptionService } from './encryption.service'; // Importer l'instance et le type
+import { EncryptionService } from './encryption.service'; // Importer l'instance et le type
 
 import { MembershipService } from './membership.service';
 import { RegisterViaInvitationDto } from '../dtos/membership.validation';
@@ -67,7 +67,7 @@ export class AuthService {
 
     private verifyJwt<T>(token: string, secret: string): T | null {
         try { return jwt.verify(token, secret) as T; }
-        catch (error) {
+        catch (e) {
             // Log plus détaillé si besoin en dev/staging
             // console.error("JWT Verification failed:", error);
             return null;
@@ -106,7 +106,7 @@ export class AuthService {
 
     // --- Méthodes publiques --- (inchangées, mais utilisent maintenant this.encryptionService)
 
-    async initiateLogin(loginData: LoginInitiateDto, req?: Request): Promise<{ type: 'tokens', tokens: AuthTokensDto } | { type: '2fa_challenge', challenge: TwoFactorChallengeDto, pre2faToken: string }> {
+    async initiateLogin(loginData: LoginInitiateDto): Promise<{ type: 'tokens', tokens: AuthTokensDto } | { type: '2fa_challenge', challenge: TwoFactorChallengeDto, pre2faToken: string }> {
         const { usernameOrEmail, password } = loginData;
         const isEmail = usernameOrEmail.includes('@');
         const user = isEmail
@@ -148,7 +148,7 @@ export class AuthService {
         return { type: '2fa_challenge', challenge, pre2faToken };
     }
 
-    async sendTwoFactorCode(pre2faToken: string, method: 'email' | 'sms'): Promise<void> {
+    async sendTwoFactorCode(pre2faToken: string, method: 'email'|'sms'): Promise<void> {
         const payload = this.verifyJwt<PreTwoFactorPayload>(pre2faToken, JWT_SECRET);
         if (!payload || payload.type !== 'pre-2fa') throw new InvalidPre2FATokenError();
 

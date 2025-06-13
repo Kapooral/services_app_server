@@ -1,11 +1,11 @@
 // seeders/YYYYMMDDHHMMSS-seed-countries.ts
-import {QueryInterface, Sequelize} from 'sequelize';
+import {QueryInterface} from 'sequelize';
 import * as fs from 'fs';
 import * as path from 'path';
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-    async up(queryInterface: QueryInterface, sequelize: Sequelize): Promise<void> {
+    async up(queryInterface: QueryInterface): Promise<void> {
         const countriesFilePath = path.join(__dirname, 'data', 'countries.json');
         let countriesData = {};
 
@@ -40,7 +40,7 @@ module.exports = {
         }
     },
 
-    async down(queryInterface: QueryInterface, sequelize: Sequelize): Promise<void> {
+    async down(queryInterface: QueryInterface): Promise<void> {
         // Supprimer toutes les données insérées par ce seed
         await queryInterface.bulkDelete('countries', {}, {});
         console.log("Countries table data deleted.");

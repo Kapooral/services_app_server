@@ -1,10 +1,13 @@
-'use strict';
+// src/migrations/YYYYMMDDHHMMSS-create-users.ts
+import { QueryInterface, DataTypes } from 'sequelize';
 
-import { QueryInterface, DataTypes, Sequelize, Transaction } from 'sequelize';
-
-/** @type {import('sequelize-cli').Migration} */
-module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize) {
+/**
+ * Fonction d'application de la migration (création de la table users)
+ * @param {QueryInterface} queryInterface - L'interface de requête Sequelize.
+ */
+export async function up(queryInterface: QueryInterface) {
+    const transaction = await queryInterface.sequelize.transaction()
+    try {
         await queryInterface.createTable('users', {
             id: {
                 allowNull: false,
@@ -14,13 +17,11 @@ module.exports = {
             },
             username: {
                 type: DataTypes.STRING(50),
-                allowNull: false,
-                unique: true
+                allowNull: false
             },
             email: {
                 type: DataTypes.STRING(100),
-                allowNull: false,
-                unique: true
+                allowNull: false
             },
             email_masked: {
                 type: DataTypes.STRING(100),
@@ -41,8 +42,7 @@ module.exports = {
             },
             phone: {
                 type: DataTypes.STRING(20),
-                allowNull: true,
-                unique: true
+                allowNull: true
             },
             phone_masked: {
                 type: DataTypes.STRING(20),
@@ -62,10 +62,6 @@ module.exports = {
                 defaultValue: false
             },
             password: {
-                type: DataTypes.STRING,
-                allowNull: false
-            },
-            salt: {
                 type: DataTypes.STRING,
                 allowNull: false
             },
@@ -112,35 +108,81 @@ module.exports = {
                 type: DataTypes.TEXT, // TEXT pour potentiellement longs secrets chiffrés
                 allowNull: true
             },
-            created_at: {
-                allowNull: false,
+            password_reset_token: {
+                type: DataTypes.STRING,
+                allowNull: true,
+                defaultValue: null,
+            },
+            password_reset_expires_at: {
                 type: DataTypes.DATE,
-                defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
+                allowNull: true,
+                defaultValue: null,
+            },
+            email_activation_token: {
+                type: DataTypes.STRING,
+                allowNull: true,
+                defaultValue: null,
+            },
+            email_activation_token_expires_at: {
+                type: DataTypes.DATE,
+                allowNull: true,
+                defaultValue: null,
+            },
+            created_at: {
+                type: DataTypes.DATE,
+                allowNull: false
             },
             updated_at: {
-                allowNull: false,
                 type: DataTypes.DATE,
-                defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
+                allowNull: false
             }
         }, {
             charset: 'utf8mb4',
-            collate: 'utf8mb4_unicode_ci'
+            collate: 'utf8mb4_unicode_ci',
+            transaction
         });
 
         // Ajouter les index séparément (unique:true crée implicitement un index)
-        // Mais c'est une bonne pratique d'être explicite pour les autres/futurs index
-        await queryInterface.addIndex('users', ['email'], { unique: true, name: 'users_email_unique' });
-        await queryInterface.addIndex('users', ['username'], { unique: true, name: 'users_username_unique' });
-        // L'index unique sur 'phone' est créé implicitement par unique: true ci-dessus,
-        // mais peut être ajouté explicitement si désiré :
-        // await queryInterface.addIndex('users', ['phone'], { unique: true, name: 'users_phone_unique' });
-    },
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize) {
-        // Supprimer les index avant de supprimer la table
-        await queryInterface.removeIndex('users', 'users_email_unique');
-        await queryInterface.removeIndex('users', 'users_username_unique');
-        // await queryInterface.removeIndex('users', 'users_phone_unique'); // Si ajouté explicitement plus haut
+        await queryInterface.addIndex('users', ['email'], { unique: true, name: 'idx_users_email', transaction });
+        await queryInterface.addIndex('users', ['phone'], { unique: true, name: 'idx_users_phone', transaction });
+        await queryInterface.addIndex('users', ['username'], { unique: true, name: 'idx_users_username', transaction });
+        await queryInterface.addIndex('users', ['password_reset_token'], { unique: true, name: 'idx_users_password_reset_token', transaction });
+        await queryInterface.addIndex('users', ['email_activation_token'], { unique: true, name: 'idx_users_email_activation_token', transaction });
 
-        await queryInterface.dropTable('users');
+        await transaction.commit();
+        console.log('Create users UP succeed.')
+    } catch(e) {
+        console.log('Create users UP failed.')
+        await transaction.rollback();
+        console.log(e);
     }
-};
+}
+
+/**
+ * Fonction d'annulation de la migration (suppression de la table users)
+ * @param {QueryInterface} queryInterface - L'interface de requête Sequelize.
+ */
+export async function down(queryInterface: QueryInterface) {
+    const transaction = await queryInterface.sequelize.transaction()
+    try {
+        // Supprimer les index avant de supprimer la table
+        await queryInterface.removeIndex('users', 'idx_users_email', {transaction});
+        await queryInterface.removeIndex('users', 'idx_users_phone', {transaction});
+        await queryInterface.removeIndex('users', 'idx_users_username', {transaction});
+        await queryInterface.removeIndex('users', 'idx_users_password_reset_token', {transaction});
+        await queryInterface.removeIndex('users', 'idx_users_email_activation_token', {transaction});
+
+        await queryInterface.dropTable('users', {transaction});
+
+        if (queryInterface.sequelize.getDialect() === 'postgres') {
+            await queryInterface.sequelize.query('DROP TYPE IF EXISTS "enum_users_two_factor_method";', { transaction });
+        }
+
+        await transaction.commit();
+        console.log('Create users DOWN succeed.')
+    } catch(e) {
+        console.log('Create users DOWN failed.')
+        await transaction.rollback();
+        console.log(e);
+    }
+}

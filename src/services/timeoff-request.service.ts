@@ -1,7 +1,7 @@
 // src/services/timeoff-request.service.ts
 import { ModelCtor, Op, WhereOptions } from 'sequelize';
 import db from '../models';
-import TimeOffRequest, { TimeOffRequestAttributes, TimeOffRequestCreationAttributes, TimeOffRequestStatus, TimeOffRequestType } from '../models/TimeOffRequest';
+import TimeOffRequest, { TimeOffRequestAttributes, TimeOffRequestCreationAttributes, TimeOffRequestStatus } from '../models/TimeOffRequest';
 import Membership, { MembershipAttributes, MembershipRole, MembershipStatus as MemberStatus } from '../models/Membership';
 import User from '../models/User'; // Pour les infos de l'acteur dans les notifications
 import Establishment from '../models/Establishment'; // Pour les infos dans les notifications
@@ -15,10 +15,8 @@ import {
 import { PaginationDto, createPaginationResult } from '../dtos/pagination.validation';
 import { AppError } from '../errors/app.errors';
 import { TimeOffRequestNotFoundError, TimeOffRequestInvalidActionError } from '../errors/availability.errors';
-import { MembershipNotFoundError } from '../errors/membership.errors';
+
 import { INotificationService } from './notification.service'; // Interface pour le service de notification
-import { UserNotFoundError } from '../errors/user.errors';
-import { EstablishmentNotFoundError } from '../errors/establishment.errors'
 
 export class TimeOffRequestService {
     private timeOffRequestModel: ModelCtor<TimeOffRequest>;

@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
-import { Request, Response, NextFunction } from 'express';
+import { Request } from 'express';
 import { PreTwoFactorPayload } from '../dtos/auth.validation';
 
 const generalWindowMs = 15 * 60 * 1000;
@@ -19,7 +19,7 @@ export const loginInitiateLimiter = rateLimit({
     windowMs: generalWindowMs,
     max: enableRateLimit ? 10 : Infinity,
     message: { message: 'Too many login attempts, please try again later.' },
-    keyGenerator: (req: Request, res: Response): string => {
+    keyGenerator: (req: Request): string => {
         const identifier = req.body?.usernameOrEmail || 'unknown_identifier';
         const ip = req.ip || 'unknown_ip';
         return `${ip}-${identifier}`;
@@ -30,7 +30,7 @@ export const sendCodeLimiter = rateLimit({
     windowMs: loginWindowMs,
     max: enableRateLimit ? 5 : Infinity,
     message: { message: 'Too many 2FA code requests, please try again later.' },
-    keyGenerator: (req: Request, res: Response): string => {
+    keyGenerator: (req: Request): string => {
         const token = req.headers[PRE_2FA_TOKEN_HEADER.toLowerCase()] as string;
         const ip = req.ip || 'unknown_ip';
         if (!token) return ip;
@@ -41,7 +41,7 @@ export const sendCodeLimiter = rateLimit({
             }
             console.warn("Invalid payload structure in pre-2fa token for send-code rate limit key.");
             return ip;
-        } catch (err) {
+        } catch (e) {
             console.warn("Invalid pre-2fa token during rate limit key generation for send-code");
             return ip;
         }
@@ -52,7 +52,7 @@ export const verifyCodeLimiter = rateLimit({
     windowMs: loginWindowMs,
     max: enableRateLimit ? 10 : Infinity,
     message: { message: 'Too many 2FA code verification attempts, please try again later.' },
-    keyGenerator: (req: Request, res: Response): string => {
+    keyGenerator: (req: Request): string => {
         const token = req.headers[PRE_2FA_TOKEN_HEADER.toLowerCase()] as string;
         const ip = req.ip || 'unknown_ip';
         if (!token) return ip;
@@ -63,7 +63,7 @@ export const verifyCodeLimiter = rateLimit({
             }
             console.warn("Invalid payload structure in pre-2fa token for verify-code rate limit key.");
             return ip;
-        } catch (err) {
+        } catch (e) {
             console.warn("Invalid pre-2fa token during rate limit key generation for verify-code");
             return ip;
         }

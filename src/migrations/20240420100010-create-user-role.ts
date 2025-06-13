@@ -1,10 +1,10 @@
 'use strict';
 
-import { QueryInterface, DataTypes, Sequelize, Transaction } from 'sequelize';
+import { QueryInterface, DataTypes } from 'sequelize';
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-    async up(queryInterface: QueryInterface, Sequelize: Sequelize) {
+    async up(queryInterface: QueryInterface) {
         await queryInterface.createTable('user_roles', {
             user_id: {
                 type: DataTypes.INTEGER.UNSIGNED,
@@ -40,7 +40,7 @@ module.exports = {
         // await queryInterface.addIndex('user_roles', ['user_id']);
         // await queryInterface.addIndex('user_roles', ['role_id']);
     },
-    async down(queryInterface: QueryInterface, Sequelize: Sequelize) {
+    async down(queryInterface: QueryInterface) {
         await queryInterface.dropTable('user_roles');
     }
 };

@@ -4,7 +4,7 @@ import { TimeOffRequestType, TimeOffRequestStatus } from '../models/TimeOffReque
 import { MembershipRole, MembershipStatus } from '../models/Membership';
 
 module.exports = {
-  async up(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+  async up(queryInterface: QueryInterface): Promise<void> {
     const transaction: Transaction = await queryInterface.sequelize.transaction();
     try {
       // Récupérer des memberships STAFF actifs pour créer des demandes
@@ -114,7 +114,7 @@ module.exports = {
     }
   },
 
-  async down(queryInterface: QueryInterface, Sequelize: Sequelize): Promise<void> {
+  async down(queryInterface: QueryInterface): Promise<void> {
     const transaction: Transaction = await queryInterface.sequelize.transaction();
     try {
       // Supprimer toutes les demandes créées (simple pour un seed)

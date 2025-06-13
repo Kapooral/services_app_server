@@ -10,7 +10,7 @@ import { ZodError } from 'zod';
 import { AppError } from '../errors/app.errors';
 import { UserNotFoundError, DuplicateEmailError, DuplicateUsernameError } from '../errors/user.errors';
 import { UserService } from '../services/user.service';
-import { MembershipService } from '../services/membership.service';
+
 import { RegisterViaInvitationSchema, RegisterViaInvitationDto } from '../dtos/membership.validation';
 import { setCsrfCookies, clearCsrfCookies } from '../middlewares/csrf.middleware';
 
@@ -23,12 +23,10 @@ const EnableTotpSchema = z.object({
     secret: z.string(),
     token: z.string().length(6, "TOTP token must be 6 digits"),
 });
-type EnableTotpDto = z.infer<typeof EnableTotpSchema>;
 
 const DisableTotpSchema = z.object({
     password: z.string(),
 });
-type DisableTotpDto = z.infer<typeof DisableTotpSchema>;
 
 const refreshTokenCookieOptions: CookieOptions = {
     httpOnly: true,
@@ -60,7 +58,7 @@ export class AuthController {
     async initiateLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
             const loginDto = LoginInitiateSchema.parse(req.body);
-            const result = await this.authService.initiateLogin(loginDto, req);
+            const result = await this.authService.initiateLogin(loginDto);
 
             if (result.type === 'tokens') {
                 res.status(200).json({ type: 'tokens', tokens: result.tokens });
@@ -165,8 +163,8 @@ export class AuthController {
     }
 
     async requestTotpSetup(req: Request, res: Response, next: NextFunction): Promise<void> {
-        const userId = (req as any).user?.id;
-        const userEmail = (req as any).user?.email;
+        const userId = (req as Request).user?.id;
+        const userEmail = (req as Request).user?.email;
         if (!userId || !userEmail) { return next(new AppError('AuthenticationRequired', 401, 'User must be authenticated.')); }
         try {
             const secret = this.authService.generateTotpSecret();

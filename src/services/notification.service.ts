@@ -442,24 +442,3 @@ export class ConsoleNotificationService implements INotificationService {
         // await this.send({ to: memberEmail, subject, html });
     }
 }
-
-export class NullNotificationService implements INotificationService {
-    async sendEmailVerificationCode(to: string, code: string): Promise<void> { /* no-op */ }
-    async sendPhoneVerificationCode(phone: string, code: string): Promise<void> { /* no-op */ }
-    async sendPasswordRecoveryToken(to: string, code: string, expires_at: number): Promise<void> { /* no-op */ }
-    async sendWelcomeEmail(to: string): Promise<void> { /* no-op */ }
-    async sendActivationEmail(to: string, activationToken: string): Promise<void> { /* no-op */ }
-    async sendAccountDeletionConfirmation(to: string): Promise<void> { /* no-op */ }
-
-    async sendBookingConfirmationClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
-    async sendBookingNotificationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes ): Promise<void> { /* no-op */ }
-    async sendBookingCancellationAdmin(adminEmail: string, booking: BookingAttributes, service: ServiceAttributes, client: UserAttributes ): Promise<void> { /* no-op */ }
-    async sendBookingStatusUpdateClient(clientEmail: string, booking: BookingAttributes, service: ServiceAttributes): Promise<void> { /* no-op */ }
-    async sendInvitationEmail(toEmail: string, token: string, establishmentName: string, inviterName: string): Promise<void> { /* no-op */ }
-    async sendMemberJoinedNotification(adminEmail: string, newMemberUsername: string, establishmentName: string): Promise<void> { /* no-op */ }
-
-    async sendTimeOffRequestSubmittedNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
-    async sendTimeOffRequestProcessedNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
-    async sendTimeOffRequestCancelledByMemberNotification(adminEmail: string, requestingUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
-    async sendTimeOffRequestCancelledByAdminNotification(memberEmail: string, memberUser: UserAttributes, timeOffRequest: TimeOffRequestAttributes, establishment: EstablishmentAttributes): Promise<void> { /* no-op */ }
-}
