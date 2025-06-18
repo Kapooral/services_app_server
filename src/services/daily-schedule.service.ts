@@ -1,23 +1,24 @@
 // src/services/daily-schedule.service.ts
-import { ModelCtor, Op } from 'sequelize';
-import moment from 'moment-timezone';
-import { RRule, RRuleSet } from 'rrule';
 
+import { ModelCtor, Op } from 'sequelize';
+import {RRule, RRuleSet, rrulestr} from 'rrule';
+import { isBefore, isEqual, isAfter, format, max as dateMax, min as dateMin, subDays, addDays } from 'date-fns';
+import * as tz from '../utils/timezone.helpers';
+
+import db from '../models';
 import RecurringPlanningModelMemberAssignment from '../models/RecurringPlanningModelMemberAssignment';
 import RecurringPlanningModel, { RPMBreak } from '../models/RecurringPlanningModel';
 import DailyAdjustmentSlot, { DASTask } from '../models/DailyAdjustmentSlot';
 import Establishment from '../models/Establishment';
 import Membership from '../models/Membership';
 import { SlotType, DefaultBlockType, BreakType } from '../types/planning.enums';
-
 import { ICacheService } from './cache/cache.service.interface';
 import { TimezoneConfigurationError, PlanningModuleError } from '../errors/planning.errors';
 import { MembershipNotFoundError } from '../errors/membership.errors';
+import {parseDateTimeInTimezone, startOfDayInTimezone} from "../utils/timezone.helpers";
 
 export interface CalculatedSlot {
-    startTime: string; // "HH:MM:SS"
-    endTime: string;   // "HH:MM:SS"
-    slotDate: string;  // "YYYY-MM-DD"
+    startTime: string; endTime: string; slotDate: string;
     type: SlotType | DefaultBlockType | BreakType;
     description?: string | null;
     source: 'RPM_ENVELOPE' | 'RPM_BREAK' | 'DAS';
@@ -29,8 +30,7 @@ export interface CalculatedSlot {
 }
 
 interface TimeBlock {
-    start: moment.Moment;
-    end: moment.Moment;
+    start: Date; end: Date;
     type: SlotType | DefaultBlockType | BreakType;
     description?: string | null;
     source: 'RPM_ENVELOPE' | 'RPM_BREAK' | 'DAS';
@@ -53,236 +53,376 @@ export class DailyScheduleService {
         return `schedule:estId${establishmentId}:membId${membershipId}:date${dateStr}`;
     }
 
-    private getMomentInTimezone(dateStr: string, timeStr: string, timezone: string): moment.Moment {
-        if (!/^\d{2}:\d{2}:\d{2}$/.test(timeStr)) {
-            // Cette erreur devrait être prévenue par les validations Zod en amont.
-            // Si elle arrive ici, c'est une incohérence de données ou un bug.
-            throw new PlanningModuleError(
-                'InvalidTimeFormatInternal',
-                500,
-                `Internal Error: Invalid time format "${timeStr}" encountered for date "${dateStr}" during schedule calculation.`,
-                'INTERNAL_TIME_FORMAT_ERROR'
-            );
-        }
-        const [hours, minutes, seconds] = timeStr.split(':').map(Number);
-        return moment.tz(dateStr, timezone).set({ hours, minutes, seconds });
+    private getUtcDateFromLocalTime(dateStr: string, timeStr: string, timezone: string): Date {
+        const localDateTimeStr = `${dateStr} ${timeStr}`;
+        return tz.parseDateTimeInTimezone(localDateTimeStr, '00:00:00', timezone);
     }
 
-    private async calculateRpmBaseBlocks(
-        activeRpm: RecurringPlanningModel,
+    private async findActiveAssignmentsForDate(
+        membershipId: number,
         targetDateStr: string,
-        targetDateMoment: moment.Moment,
-        establishmentTimezone: string
-    ): Promise<TimeBlock[]> {
-        let rpmBlocks: TimeBlock[] = [];
-        const rruleSet = new RRuleSet();
+    ): Promise<RecurringPlanningModelMemberAssignment[]> {
+        return await this.rpmMemberAssignmentModel.findAll({
+            where: {
+                membershipId,
+                assignmentStartDate: { [Op.lte]: targetDateStr },
+                [Op.or]: [
+                    // Cas 1: L'affectation n'a pas de date de fin (elle est toujours active).
+                    { assignmentEndDate: null },
+                    // Cas 2: L'affectation a une date de fin qui est AU PLUS TÔT le jour J.
+                    { assignmentEndDate: { [Op.gte]: targetDateStr } }
+                ]
+            },
+            include: [{
+                model: RecurringPlanningModel,
+                as: 'recurringPlanningModel',
+                required: true,
+            }]
+        });
+    }
 
-        const ruleDtStart = this.getMomentInTimezone(activeRpm.referenceDate, activeRpm.globalStartTime, establishmentTimezone).toDate();
+    private applyOverridesToTimeline(baseTimeline: TimeBlock[], overrideIntervals: TimeBlock[]): TimeBlock[] {
+        if (overrideIntervals.length === 0) return baseTimeline;
+        let currentTimeline = [...baseTimeline];
 
+        for (const override of overrideIntervals) {
+            const nextTimeline: TimeBlock[] = [];
+            for (const base of currentTimeline) {
+                // Cas 1: Pas de chevauchement. On garde le bloc de base.
+                if (isBefore(override.end, base.start) || isEqual(override.end, base.start) || isAfter(override.start, base.end) || isEqual(override.start, base.end)) {
+                    nextTimeline.push(base);
+                    continue;
+                }
+
+                // Cas 2: Chevauchement. Le bloc de base est fragmenté.
+                // Partie avant l'override
+                if (isBefore(base.start, override.start)) {
+                    nextTimeline.push({ ...base, end: override.start });
+                }
+                // Partie après l'override
+                if (isAfter(base.end, override.end)) {
+                    nextTimeline.push({ ...base, start: override.end });
+                }
+            }
+            currentTimeline = nextTimeline;
+        }
+        // Ajouter les blocs d'override à la timeline "trouée"
+        currentTimeline.push(...overrideIntervals);
+        return currentTimeline;
+    }
+
+    /**
+     * Prend une liste de blocs de base (l'enveloppe de travail), y soustrait les créneaux de pause,
+     * puis retourne une nouvelle timeline contenant les blocs de travail restants ET les blocs de pause insérés.
+     * @param envelopeBlocks - Les blocs de base à fragmenter (généralement un seul bloc de travail).
+     * @param breaks - La liste des pauses (format DTO) à appliquer.
+     * @param onDate - La date ('yyyy-MM-dd') pour laquelle les pauses sont calculées.
+     * @param timezone - Le fuseau horaire de l'établissement.
+     * @param rpmId - L'ID du RPM source, pour l'information de contexte dans les blocs.
+     * @returns Une nouvelle liste de TimeBlock, triée implicitement par le processus.
+     */
+    private applyBreaksToEnvelope(
+        envelopeBlocks: TimeBlock[],
+        breaks: RPMBreak[],
+        onDate: string,
+        timezone: string,
+        rpmId: number
+    ): TimeBlock[] {
+        if (!breaks || breaks.length === 0) return envelopeBlocks;
+
+        const breakTimeBlocks: TimeBlock[] = breaks.map(b => {
+            let breakStart = tz.parseDateTimeInTimezone(onDate, b.startTime, timezone);
+            let breakEnd = tz.parseDateTimeInTimezone(onDate, b.endTime, timezone);
+
+            if (isBefore(breakEnd, breakStart) || isEqual(breakEnd, breakStart)) {
+                breakEnd = addDays(breakEnd, 1);
+            }
+
+            return {
+                start: breakStart, end: breakEnd, type: b.breakType,
+                description: b.description, source: 'RPM_BREAK',
+                sourceRpmId: rpmId, sourceRpmBreakId: b.id,
+            };
+        });
+
+        let currentWorkTimeline = [...envelopeBlocks];
+
+        for (const breakBlock of breakTimeBlocks) {
+            currentWorkTimeline = currentWorkTimeline.flatMap(workBlock => {
+                const noOverlap = isBefore(breakBlock.end, workBlock.start) || isEqual(breakBlock.end, workBlock.start) ||
+                    isAfter(breakBlock.start, workBlock.end) || isEqual(breakBlock.start, workBlock.end);
+                if (noOverlap) return [workBlock];
+
+                const fragments: TimeBlock[] = [];
+                if (isBefore(workBlock.start, breakBlock.start)) {
+                    fragments.push({ ...workBlock, end: breakBlock.start });
+                }
+                if (isAfter(workBlock.end, breakBlock.end)) {
+                    fragments.push({ ...workBlock, start: breakBlock.end });
+                }
+                return fragments;
+            });
+        }
+
+        // On retourne la timeline complète (travail fragmenté + pauses) pour le tri ultérieur
+        return [...currentWorkTimeline, ...breakTimeBlocks];
+    }
+
+    private _mergeContiguousBlocks(timeline: TimeBlock[]): TimeBlock[] {
+        if (timeline.length <= 1) {
+            return timeline;
+        }
+
+        // Trier par heure de début
+        const sortedTimeline = [...timeline].sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        const merged: TimeBlock[] = [sortedTimeline[0]];
+
+        for (let i = 1; i < sortedTimeline.length; i++) {
+            const current = merged[merged.length - 1];
+            const next = sortedTimeline[i];
+
+            // Si les blocs sont de types différents, on ne peut pas les fusionner
+            if (current.type !== next.type) {
+                merged.push(next);
+                continue;
+            }
+
+            // Si le bloc suivant commence avant ou au moment où le bloc courant se termine (chevauchement ou contiguïté)
+            if (isBefore(next.start, current.end) || isEqual(next.start, current.end)) {
+                // On fusionne en étendant la fin du bloc courant
+                current.end = dateMax([current.end, next.end]);
+            } else {
+                // Pas de chevauchement, on ajoute le bloc suivant comme un nouveau bloc
+                merged.push(next);
+            }
+        }
+        return merged;
+    }
+
+    private calculateRpmBaseBlocks(
+        rpm: RecurringPlanningModel,
+        windowStart: Date, // Date UTC
+        windowEnd: Date,   // Date UTC
+        timezone: string
+    ): TimeBlock[] {
+        let occurrences: Date[];
+        const MAX_OCCURRENCES = 1000; // Sécurité contre les boucles infinies
         try {
-            const rruleOptions = RRule.parseString(activeRpm.rruleString);
-            rruleOptions.dtstart = ruleDtStart;
-            rruleOptions.tzid = establishmentTimezone
-            rruleSet.rrule(new RRule(rruleOptions));
-
-        } catch(e: any) {
-            console.error(e)
+            // DTSTART est crucial. On le construit dans le bon fuseau horaire.
+            const dtstart = tz.parseDateTimeInTimezone(rpm.referenceDate, rpm.globalStartTime, timezone);
+            const rule = rrulestr(rpm.rruleString, { dtstart });
+            occurrences = rule.all((date, i) => i < MAX_OCCURRENCES).filter(occ =>
+                (isAfter(occ, windowStart) || isEqual(occ, windowStart)) &&
+                (isBefore(occ, windowEnd) || isEqual(occ, windowEnd))
+            );
+        } catch (e) {
+            console.error(`Error parsing RRULE for RPM ID ${rpm.id}:`, e);
             return [];
         }
 
-        const occurrences = rruleSet.between(targetDateMoment.clone().startOf('day').toDate(), targetDateMoment.clone().endOf('day').toDate(), true);
+        const allBlocks: TimeBlock[] = [];
+        for (const occ of occurrences) {
+            const occDateStr = tz.formatInTimezone(occ, 'yyyy-MM-dd', timezone);
 
-        if (occurrences.length > 0) {
-            const envelopeStart = this.getMomentInTimezone(targetDateStr, activeRpm.globalStartTime, establishmentTimezone);
-            const envelopeEnd = this.getMomentInTimezone(targetDateStr, activeRpm.globalEndTime, establishmentTimezone);
+            const envelopeStart = tz.parseDateTimeInTimezone(occDateStr, rpm.globalStartTime, timezone);
+            let envelopeEnd = tz.parseDateTimeInTimezone(occDateStr, rpm.globalEndTime, timezone);
 
-            if (envelopeStart.isBefore(envelopeEnd)) {
-                rpmBlocks.push({
-                    start: envelopeStart, end: envelopeEnd, type: activeRpm.defaultBlockType,
-                    source: 'RPM_ENVELOPE', sourceRpmId: activeRpm.id,
-                    description: activeRpm.defaultBlockType === DefaultBlockType.UNAVAILABILITY ? (activeRpm.description || 'General Unavailability From Model') : activeRpm.description
-                });
+            // Gérer le cas où un créneau finit le jour suivant (ex: 22:00 - 02:00)
+            if (isBefore(envelopeEnd, envelopeStart) || isEqual(envelopeEnd, envelopeStart)) {
+                envelopeEnd = addDays(envelopeEnd, 1);
+            }
 
-                if (activeRpm.breaks && activeRpm.breaks.length > 0) {
-                    const breaksFromRpm: TimeBlock[] = activeRpm.breaks
-                        // --- CORRECTION : AJOUT D'UN FILTRE POUR IGNORER LES PAUSES INCOHÉRENTES ---
-                        .filter((b: RPMBreak) => b.startTime < b.endTime) // Ne garder que les pauses valides
-                        .map((b: RPMBreak) => ({
-                            start: this.getMomentInTimezone(targetDateStr, b.startTime, establishmentTimezone),
-                            end: this.getMomentInTimezone(targetDateStr, b.endTime, establishmentTimezone),
-                            type: b.breakType, description: b.description, source: 'RPM_BREAK' as const,
-                            sourceRpmId: activeRpm!.id, sourceRpmBreakId: b.id
-                        }))
-                        .sort((a: TimeBlock, b: TimeBlock) => a.start.valueOf() - b.start.valueOf());
+            let envelopeBlocks: TimeBlock[] = [{
+                start: envelopeStart, end: envelopeEnd, type: rpm.defaultBlockType,
+                source: 'RPM_ENVELOPE', sourceRpmId: rpm.id, description: rpm.description
+            }];
 
-                    // Si après filtrage, il reste des pauses valides, on les applique
-                    if (breaksFromRpm.length > 0) {
-                        rpmBlocks = this.subtractAndInsertIntervals(rpmBlocks, breaksFromRpm);
-                    }
-                }
+            if (rpm.breaks && rpm.breaks.length > 0) {
+                envelopeBlocks = this.applyBreaksToEnvelope(envelopeBlocks, rpm.breaks, occDateStr, timezone, rpm.id);
+            }
+            allBlocks.push(...envelopeBlocks);
+        }
+        return allBlocks;
+    }
+
+    public async getScheduleForRpm(rpmId: number, targetDateStr: string, establishmentId: number): Promise<Map<number, CalculatedSlot[]>> {
+        const rpm = await db.RecurringPlanningModel.findByPk(rpmId, { where: { establishmentId } });
+        if (!rpm) { return new Map(); }
+
+        const establishmentTimezone = rpm.establishment.timezone
+
+        const activeAssignments = await this.rpmMemberAssignmentModel.findAll({
+            where: {
+                recurringPlanningModelId: rpmId,
+                assignmentStartDate: { [Op.lte]: targetDateStr },
+                [Op.or]: [{ assignmentEndDate: { [Op.gte]: targetDateStr } }, { assignmentEndDate: null }]
+            },
+            include: [{ model: this.membershipModel, as: 'member', required: true, include: [{ model: Establishment, as: 'establishment', required: true }] }]
+        });
+        if (!activeAssignments.length) { return new Map(); }
+
+        const memberIds = activeAssignments.map(a => a.membershipId);
+        const allDasForDay = await this.dailyAdjustmentSlotModel.findAll({
+            where: { membershipId: { [Op.in]: memberIds }, slotDate: targetDateStr }
+        });
+
+        const dasByMemberId = new Map<number, DailyAdjustmentSlot[]>();
+        allDasForDay.forEach(das => {
+            if (!dasByMemberId.has(das.membershipId)) { dasByMemberId.set(das.membershipId, []); }
+            dasByMemberId.get(das.membershipId)!.push(das);
+        });
+
+        const targetDate = tz.startOfDayInTimezone(tz.parseDateTimeInTimezone(targetDateStr, '00:00:00', establishmentTimezone), establishmentTimezone)
+
+        const finalScheduleMap = new Map<number, CalculatedSlot[]>();
+        for (const assignment of activeAssignments) {
+            // --- CORRECTION 1 : Type Guard ---
+            // On vérifie que 'assignment.member' existe avant de l'utiliser.
+            if (assignment.member) {
+                const memberDas = dasByMemberId.get(assignment.membershipId) || [];
+                const memberSchedule = await this.calculateSingleMemberSchedule(assignment.member, targetDate, [assignment], memberDas);
+                finalScheduleMap.set(assignment.membershipId, memberSchedule);
             }
         }
-        return rpmBlocks;
+        return finalScheduleMap;
     }
 
-    private async getDasTimeBlocksForDay(
-        membershipId: number,
-        targetDateStr: string,
-        establishmentTimezone: string
-    ): Promise<TimeBlock[]> {
-        const dailyAdjustmentsData = await this.dailyAdjustmentSlotModel.findAll({
-            where: { membershipId, slotDate: targetDateStr }, order: [['startTime', 'ASC']],
-        });
-        return dailyAdjustmentsData.map(das => ({ /* ... map DAS to TimeBlock ... */
-            start: this.getMomentInTimezone(targetDateStr, das.startTime, establishmentTimezone),
-            end: this.getMomentInTimezone(targetDateStr, das.endTime, establishmentTimezone),
-            type: das.slotType, description: das.description, source: 'DAS' as const,
-            tasks: das.tasks, sourceDasId: das.id, isManualOverride: das.isManualOverride,
-            sourceRpmId: das.sourceRecurringPlanningModelId,
-        }));
-    }
+    public async getDailyScheduleForMember(membershipId: number, targetDateStr: string): Promise<CalculatedSlot[]> {
+        const member = await this.membershipModel.findByPk(membershipId, { include: [{ model: Establishment, as: 'establishment', required: true }] });
 
-    async getDailyScheduleForMember(membershipId: number, targetDateStr: string): Promise<CalculatedSlot[]> {
-        const member = await this.membershipModel.findByPk(membershipId, {
-            include: [{ model: Establishment, as: 'establishment', required: true, attributes: ['id', 'timezone'] }]
-        });
+        if (!member) { throw new MembershipNotFoundError(`Membership ID ${membershipId} not found.`); }
+        if (!member.establishment?.timezone) { throw new TimezoneConfigurationError(`Timezone not found for member ${membershipId}`); }
 
-        if (!member || !member.establishment) {
-            throw new MembershipNotFoundError(`Membership ID ${membershipId} not found or not associated with an establishment.`);
-        }
-        if (!member.establishment.timezone) {
-            throw new TimezoneConfigurationError(`Timezone not configured for establishment ID : ${ member.establishment.id }`);
-        }
-        const establishmentTimezone = member.establishment.timezone;
+        const timezone = member.establishment.timezone;
+        // La date de référence est le début du jour J dans le fuseau horaire de l'établissement.
+        const targetDateStartOfDay = tz.startOfDayInTimezone(tz.parseDateTimeInTimezone(targetDateStr, '00:00:00', timezone), timezone);
 
-        // **A. Vérification du Cache**
         const cacheKey = this.scheduleCacheKey(member.establishment.id, membershipId, targetDateStr);
         const cachedSchedule = await this.cacheService.get<CalculatedSlot[]>(cacheKey);
         if (cachedSchedule) { return cachedSchedule; }
 
-        const targetDateMoment = moment.tz(targetDateStr, 'YYYY-MM-DD', establishmentTimezone).startOf('day');
+        const activeAssignments = await this.findActiveAssignmentsForDate(membershipId, targetDateStr);
+        const dasForDay = await this.dailyAdjustmentSlotModel.findAll({ where: { membershipId, slotDate: targetDateStr } });
 
-        let scheduleTimeBlocks: TimeBlock[] = [];
+        const finalSchedule = await this.calculateSingleMemberSchedule(member, targetDateStartOfDay, activeAssignments, dasForDay);
 
-        // 1. RPM Actif
-        const activeAssignment = await this.rpmMemberAssignmentModel.findOne({
-            where: {
-                membershipId,
-                assignmentStartDate: { [Op.lte]: targetDateStr },
-                [Op.or]: [ { assignmentEndDate: { [Op.gte]: targetDateStr } }, { assignmentEndDate: null } ]
-            },
-            include: [{ model: RecurringPlanningModel, as: 'recurringPlanningModel', required: true }]
-        });
-        const activeRpm: RecurringPlanningModel | null = activeAssignment?.recurringPlanningModel || null;
+        await this.cacheService.set(cacheKey, finalSchedule, 900);
 
-        if (activeRpm) {
-            scheduleTimeBlocks = await this.calculateRpmBaseBlocks(activeRpm, targetDateStr, targetDateMoment, establishmentTimezone);
-        }
-
-        // 2. DAS pour le Jour
-        const dasTimeBlocks = await this.getDasTimeBlocksForDay(membershipId, targetDateStr, establishmentTimezone);
-
-        // 3. Fusionner
-        scheduleTimeBlocks = this.mergeAndOverrideIntervals(scheduleTimeBlocks, dasTimeBlocks);
-
-        // 4. Formatage Final
-        const finalCalculatedSlots = scheduleTimeBlocks
-            .filter(block => block.start.isBefore(block.end))
-            .sort((a, b) => a.start.valueOf() - b.start.valueOf())
-            .map(block => ({ /* ... map to CalculatedSlot ... */
-                startTime: block.start.format('HH:mm:ss'),
-                endTime: block.end.format('HH:mm:ss'),
-                slotDate: targetDateStr,
-                type: block.type, description: block.description, source: block.source,
-                tasks: block.tasks, sourceRpmId: block.sourceRpmId,
-                sourceRpmBreakId: block.sourceRpmBreakId, sourceDasId: block.sourceDasId,
-                isManualOverride: block.isManualOverride,
-            }));
-
-        // **B. Stockage dans le Cache avant de retourner**
-        // TTL de 15 minutes pour les plannings journaliers, peuvent changer avec des DAS
-        await this.cacheService.set(cacheKey, finalCalculatedSlots, 900);
-
-        return finalCalculatedSlots;
+        return finalSchedule;
     }
 
-    private subtractAndInsertIntervals(
-        baseIntervals: TimeBlock[],
-        subtractingIntervals: TimeBlock[]
-    ): TimeBlock[] {
+    private async calculateSingleMemberSchedule(
+        member: Membership,
+        targetDate: Date, // Date UTC représentant le début du jour J dans le TZ de l'établissement
+        assignments: RecurringPlanningModelMemberAssignment[],
+        dasForDay: DailyAdjustmentSlot[]
+    ): Promise<CalculatedSlot[]> {
+        const timezone = member.establishment!.timezone!;
+
+        // 1. Définir une fenêtre de clipping précise pour le jour J.
+        const targetDayWindowEnd = tz.endOfDayInTimezone(targetDate, timezone);
+
+        // 2. Définir une fenêtre de recherche ROBUSTE pour rrule.js
+        // Elle doit être assez large pour voir l'intégralité des créneaux qui touchent le jour J.
+        const searchWindowStart = subDays(targetDate, 1);
+
+        // La fenêtre doit se terminer à la FIN du jour J+1 pour capturer
+        // l'intégralité d'un créneau de nuit qui commence le jour J.
+        const searchWindowEnd = tz.endOfDayInTimezone(addDays(targetDayWindowEnd, 1), timezone);
+
+        // 3. Générer tous les blocs de base des RPM en utilisant la fenêtre de recherche robuste.
+        let baseTimeline: TimeBlock[] = [];
+        for (const assignment of assignments) {
+            if (assignment.recurringPlanningModel) {
+                const rpmBlocks = this.calculateRpmBaseBlocks(assignment.recurringPlanningModel, searchWindowStart, searchWindowEnd, timezone);
+                baseTimeline.push(...rpmBlocks);
+            }
+        }
+        baseTimeline = this._mergeContiguousBlocks(baseTimeline);
+
+        // 4. Générer les blocs d'ajustement (DAS)
+        const overrideBlocks: TimeBlock[] = dasForDay.map(das => ({
+            start: tz.parseDateTimeInTimezone(das.slotDate, das.startTime, timezone),
+            end: tz.parseDateTimeInTimezone(das.slotDate, das.endTime, timezone),
+            type: das.slotType, description: das.description, source: 'DAS',
+            tasks: das.tasks, sourceDasId: das.id, isManualOverride: das.isManualOverride
+        }));
+
+        // 5. Appliquer les overrides sur la timeline de base
+        const mergedTimeline = this.applyOverridesToTimeline(baseTimeline, overrideBlocks);
+
+        // 6. LE SEUL TRI QUI FAIT FOI : Assurer l'ordre chronologique avant le découpage
+        const sortedTimeline = mergedTimeline.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        // 7. Découper la timeline pour ne garder que ce qui est DANS le jour J
+        const finalTimeline = sortedTimeline.map(block => ({
+            ...block,
+            start: dateMax([block.start, targetDate]),
+            end: dateMin([block.end, targetDayWindowEnd]),
+        })).filter(block => isBefore(block.start, block.end));
+
+        // 8. Trier et formater pour la sortie (ce dernier tri est une sécurité, le plus important est le #6)
+        return finalTimeline
+            .sort((a, b) => a.start.getTime() - b.start.getTime())
+            .map(block => ({
+                startTime: tz.formatInTimezone(block.start, 'HH:mm:ss', timezone),
+                endTime: tz.formatInTimezone(block.end, 'HH:mm:ss', timezone),
+                slotDate: tz.formatInTimezone(block.start, 'yyyy-MM-dd', timezone),
+                type: block.type, description: block.description, source: block.source,
+                tasks: block.tasks, sourceRpmId: block.sourceRpmId, sourceRpmBreakId: block.sourceRpmBreakId,
+                sourceDasId: block.sourceDasId, isManualOverride: block.isManualOverride,
+            }));
+    }
+
+    private subtractAndInsertIntervals(baseIntervals: TimeBlock[], subtractingIntervals: TimeBlock[]): TimeBlock[] {
         if (subtractingIntervals.length === 0) return baseIntervals;
         let currentResult = [...baseIntervals];
 
         for (const sub of subtractingIntervals) {
             const nextResult: TimeBlock[] = [];
             for (const base of currentResult) {
-                if (base.source === 'RPM_BREAK' && sub.source === 'RPM_BREAK') { // Une pause RPM ne soustrait pas une autre pause RPM
-                    nextResult.push(base);
-                    continue;
-                }
-                if (sub.end.isSameOrBefore(base.start) || sub.start.isSameOrAfter(base.end)) {
+                if (isBefore(sub.end, base.start) || isEqual(sub.end, base.start) || isAfter(sub.start, base.end) || isEqual(sub.start, base.end)) {
                     nextResult.push(base); continue;
                 }
-                if (base.start.isBefore(sub.start)) {
-                    nextResult.push({ ...base, end: sub.start.clone() });
+                if (isBefore(base.start, sub.start)) {
+                    nextResult.push({ ...base, end: new Date(sub.start) });
                 }
-                const actualSubStart = moment.max(base.start, sub.start);
-                const actualSubEnd = moment.min(base.end, sub.end);
-                if (actualSubStart.isBefore(actualSubEnd)) {
+                const actualSubStart = dateMax([base.start, sub.start]);
+                const actualSubEnd = dateMin([base.end, sub.end]);
+                if (isBefore(actualSubStart, actualSubEnd)) {
                     nextResult.push({ ...sub, start: actualSubStart, end: actualSubEnd });
                 }
-                if (base.end.isAfter(sub.end)) {
-                    nextResult.push({ ...base, start: sub.end.clone() });
+                if (isAfter(base.end, sub.end)) {
+                    nextResult.push({ ...base, start: new Date(sub.end) });
                 }
             }
-            currentResult = nextResult; // Ne pas trier ici, trier à la fin pour performance
+            currentResult = nextResult;
         }
-        return currentResult; // Le filtrage et le tri se feront à la fin de getDailyScheduleForMember
+        return currentResult;
     }
 
     private mergeAndOverrideIntervals(rpmGeneratedIntervals: TimeBlock[], dasIntervals: TimeBlock[]): TimeBlock[] {
         if (dasIntervals.length === 0) return rpmGeneratedIntervals;
-        // Avec la garantie que les DAS ne se chevauchent pas entre eux (validé par DailyAdjustmentSlotService),
-        // la logique est plus simple : chaque DAS "perce" les intervalles RPM.
         let currentTimeline = [...rpmGeneratedIntervals];
 
-        for (const das of dasIntervals) { // Les DAS sont déjà triés par startTime
+        for (const das of dasIntervals) {
             const nextTimeline: TimeBlock[] = [];
             for (const block of currentTimeline) {
-                // Si le bloc est un DAS, on le garde (ils ne se chevauchent pas)
-                if (block.source === 'DAS') {
-                    nextTimeline.push(block);
-                    continue;
-                }
-                // Maintenant, block est un RPM_ENVELOPE ou RPM_BREAK
-                // Cas 1: Pas de chevauchement entre block (RPM) et das
-                if (das.end.isSameOrBefore(block.start) || das.start.isSameOrAfter(block.end)) {
+                if (isBefore(das.end, block.start) || isEqual(das.end, block.start) || isAfter(das.start, block.end) || isEqual(das.start, block.end)) {
                     nextTimeline.push(block);
                 } else {
-                    // Cas 2: Chevauchement. Le DAS "perce" le bloc RPM.
-                    // Partie du bloc RPM avant le DAS
-                    if (block.start.isBefore(das.start)) {
-                        nextTimeline.push({ ...block, end: das.start.clone() });
+                    if (isBefore(block.start, das.start)) {
+                        nextTimeline.push({ ...block, end: new Date(das.start) });
                     }
-                    // La partie du bloc RPM après le DAS (sera traitée implicitement par le prochain das ou la fin)
-                    // ou ajoutée si le das ne couvre pas tout
-                    if (block.end.isAfter(das.end)) {
-                        // On ajoute un nouveau segment pour la partie après le DAS.
-                        // Ce segment pourrait être affecté par d'autres DAS plus tard.
-                        nextTimeline.push({ ...block, start: das.end.clone() });
+                    if (isAfter(block.end, das.end)) {
+                        nextTimeline.push({ ...block, start: new Date(das.end) });
                     }
-                    // Le DAS lui-même sera ajouté plus tard dans sa propre itération s'il n'est pas déjà dans la timeline,
-                    // ou plutôt, on construit la timeline finale en intégrant les DAS.
                 }
             }
             currentTimeline = nextTimeline;
         }
-        // Ajouter tous les DAS à la timeline "nettoyée" des blocs RPM
         currentTimeline.push(...dasIntervals);
-
-        // Trier et filtrer les blocs de durée nulle
-        return currentTimeline
-            .filter(block => block.start.isBefore(block.end))
-            .sort((a,b)=> a.start.valueOf() - b.start.valueOf());
+        return currentTimeline;
     }
 }

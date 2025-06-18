@@ -1,6 +1,6 @@
 // src/services/rpm-member-assignment.service.ts
 import { ModelCtor, Sequelize, Op, WhereOptions, Transaction } from 'sequelize';
-import moment from 'moment'; // Pour la comparaison de dates
+
 import RecurringPlanningModelMemberAssignment, {RpmMemberAssignmentAttributes} from '../models/RecurringPlanningModelMemberAssignment';
 import Membership from '../models/Membership';
 import RecurringPlanningModel from '../models/RecurringPlanningModel';
@@ -9,9 +9,9 @@ import {
     UpdateRpmMemberAssignmentDto,
     ListRpmMemberAssignmentsQueryDto,
     RpmMemberAssignmentOutputDto,
-    BulkAssignMembersToRpmDto, // NOUVEAU
-    BulkUnassignMembersFromRpmDto, // NOUVEAU
-    RpmBulkAssignmentErrorDetail // NOUVEAU
+    BulkAssignMembersToRpmDto,
+    BulkUnassignMembersFromRpmDto,
+    RpmBulkAssignmentErrorDetail
 } from '../dtos/planning/rpm-member-assignment.validation';
 import { PaginationDto, createPaginationResult } from '../dtos/pagination.validation';
 import { AppError } from '../errors/app.errors';
@@ -64,33 +64,32 @@ export class RpmMemberAssignmentService {
         newStartDateStr: string,
         newEndDateStr: string | null | undefined,
         excludeAssignmentId?: number,
-        transaction?: Transaction // Paramètre transaction optionnel
+        transaction?: Transaction
     ): Promise<void> {
-        const newStart = moment(newStartDateStr, 'YYYY-MM-DD');
-        const newEnd = newEndDateStr ? moment(newEndDateStr, 'YYYY-MM-DD') : null;
+        const newEnd = newEndDateStr || '9999-12-31'; // Utiliser une date lointaine pour les comparaisons
 
         const existingAssignments = await this.rpmMemberAssignmentModel.findAll({
             where: {
                 membershipId,
                 ...(excludeAssignmentId && { id: { [Op.ne]: excludeAssignmentId } }),
             },
-            transaction, // Utiliser la transaction
+            transaction,
         });
 
         for (const existing of existingAssignments) {
-            const existingStart = moment(existing.assignmentStartDate, 'YYYY-MM-DD');
-            const existingEnd = existing.assignmentEndDate ? moment(existing.assignmentEndDate, 'YYYY-MM-DD') : null;
+            const existingStart = existing.assignmentStartDate;
+            const existingEnd = existing.assignmentEndDate || '9999-12-31';
 
-            const overlaps =
-                (newStart.isSameOrBefore(existingEnd || '9999-12-31')) &&
-                (existingStart.isSameOrBefore(newEnd || '9999-12-31'));
+            // Pour le format 'YYYY-MM-DD', une comparaison de chaînes est sûre et performante.
+            // La condition est: (start1 <= end2) ET (start2 <= end1)
+            const overlaps = (newStartDateStr <= existingEnd) && (existingStart <= newEnd);
 
             if (overlaps) {
-                throw new RpmAssignmentError( // Cette erreur a déjà un code et un statut
+                throw new RpmAssignmentError(
                     `Assignment period from ${newStartDateStr} to ${newEndDateStr || 'infinity'} ` +
-                    `overlaps with existing assignment (ID: ${existing.id}) for member ID ${membershipId}.`,
-                    'ASSIGNMENT_PERIOD_OVERLAP', // errorCode
-                    { membershipId, existingAssignmentId: existing.id }
+                    `overlaps with existing assignment (ID: ${existing.id}).`,
+                    'ASSIGNMENT_PERIOD_OVERLAP',
+                    { existingAssignmentId: existing.id }
                 );
             }
         }
@@ -215,10 +214,6 @@ export class RpmMemberAssignmentService {
 
             const newStartDate = dto.assignmentStartDate ?? assignment.assignmentStartDate;
             const newEndDate = dto.assignmentEndDate !== undefined ? dto.assignmentEndDate : assignment.assignmentEndDate; // Gérer null explicitement
-
-            if (newEndDate && moment(newStartDate, 'YYYY-MM-DD').isAfter(moment(newEndDate, 'YYYY-MM-DD'))) {
-                throw new RpmAssignmentError("Assignment endDate must be on or after startDate.");
-            }
 
             await this.checkForOverlappingAssignments(
                 assignment.membershipId,

@@ -134,4 +134,66 @@ describe('DailyScheduleService - Integration Tests', () => {
         expect(schedule[3]).toEqual(expect.objectContaining({ startTime: '14:00:00', endTime: '15:00:00', source: 'DAS' }));
         expect(schedule[4]).toEqual(expect.objectContaining({ startTime: '15:00:00', endTime: '17:00:00' }));
     });
+
+    it('should return a map of schedules for all members assigned to an RPM', async () => {
+        // --- ARRANGE ---
+        // 1. Créer le RPM, 3 membres, 3 affectations, et 1 DAS pour le membre B
+        const rpm = await db.RecurringPlanningModel.create({
+            name: 'RPM for Bulk Test', establishmentId: testEstablishment.id,
+            referenceDate: '2024-01-01', globalStartTime: '08:00:00',
+            globalEndTime: '16:00:00', rruleString: 'FREQ=DAILY',
+            defaultBlockType: DefaultBlockType.WORK, breaks: []
+        });
+
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        const userA = await db.User.create({ username: 'testMemberA', email: 'memberA@test.com', password: hashedPassword, email_masked: 'masked-memberA@test.com' });
+        const memberA = await db.Membership.create({ userId: userA.id, establishmentId: testEstablishment.id, role: MembershipRole.STAFF, status: MembershipStatus.ACTIVE });
+        const userB = await db.User.create({ username: 'testMemberB', email: 'memberB@test.com', password: hashedPassword, email_masked: 'masked-memberB@test.com' });
+        const memberB = await db.Membership.create({ userId: userB.id, establishmentId: testEstablishment.id, role: MembershipRole.STAFF, status: MembershipStatus.ACTIVE });
+        const userC = await db.User.create({ username: 'testMemberC', email: 'memberC@test.com', password: hashedPassword, email_masked: 'masked-memberC@test.com' });
+        const memberC = await db.Membership.create({ userId: userC.id, establishmentId: testEstablishment.id, role: MembershipRole.STAFF, status: MembershipStatus.ACTIVE });
+
+        await db.RecurringPlanningModelMemberAssignment.bulkCreate([
+            { membershipId: memberA.id, recurringPlanningModelId: rpm.id, assignmentStartDate: '2024-01-01' },
+            { membershipId: memberB.id, recurringPlanningModelId: rpm.id, assignmentStartDate: '2024-01-01' },
+            { membershipId: memberC.id, recurringPlanningModelId: rpm.id, assignmentStartDate: '2024-01-01' },
+        ]);
+
+        const targetDate = '2024-11-21';
+        await db.DailyAdjustmentSlot.create({
+            membershipId: memberB.id, establishmentId: testEstablishment.id, slotDate: targetDate,
+            startTime: '10:00:00', endTime: '11:00:00',
+            slotType: SlotType.TRAINING_EXTERNAL, isManualOverride: true,
+        });
+
+        // Espionner les appels DB pour vérifier l'optimisation N+1
+        const assignmentSpy = jest.spyOn(db.RecurringPlanningModelMemberAssignment, 'findAll');
+        const dasSpy = jest.spyOn(db.DailyAdjustmentSlot, 'findAll');
+
+        // --- ACT ---
+        const scheduleMap = await service.getScheduleForRpm(rpm.id, targetDate, testEstablishment.id);
+
+        // --- ASSERT ---
+        expect(assignmentSpy).toHaveBeenCalledTimes(1);
+        expect(dasSpy).toHaveBeenCalledTimes(1);
+
+        expect(scheduleMap).toBeInstanceOf(Map);
+        expect(scheduleMap.size).toBe(3);
+        expect(scheduleMap.has(memberA.id)).toBe(true);
+        expect(scheduleMap.has(memberB.id)).toBe(true);
+        expect(scheduleMap.has(memberC.id)).toBe(true);
+
+        const scheduleA = scheduleMap.get(memberA.id);
+        const scheduleB = scheduleMap.get(memberB.id);
+        const scheduleC = scheduleMap.get(memberC.id);
+
+        expect(scheduleA).toHaveLength(1); // Juste le travail
+        expect(scheduleC).toEqual(scheduleA); // A et C doivent avoir le même planning
+        expect(scheduleB).toHaveLength(3); // Le planning de B est découpé par le DAS
+        expect(scheduleB?.some(slot => slot.type === SlotType.TRAINING_EXTERNAL)).toBe(true);
+
+        assignmentSpy.mockRestore();
+        dasSpy.mockRestore();
+    });
+
 });

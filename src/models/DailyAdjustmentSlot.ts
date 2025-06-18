@@ -12,7 +12,6 @@ export interface DASTask {
     taskName: string;
     taskStartTime: string; // "HH:MM:SS", relatif au début du slot ou absolu dans la journée ? À préciser. Pour l'instant, absolu dans la journée.
     taskEndTime: string; // "HH:MM:SS"
-    // ... autres champs de tâche pertinents
 }
 
 interface DailyAdjustmentSlotAttributes {

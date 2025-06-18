@@ -16,6 +16,7 @@ import { ICacheService } from './cache/cache.service.interface';
 import { PaginationDto, createPaginationResult } from '../dtos/pagination.validation';
 import { AppError } from '../errors/app.errors';
 import { RpmCreationError, RpmNotFoundError, PlanningModuleError, RpmNameConflictError } from '../errors/planning.errors';
+import Membership from "../models/Membership";
 
 function mapToRpmOutputDto(rpm: RecurringPlanningModel): RecurringPlanningModelOutputDto {
     return {
@@ -47,7 +48,7 @@ export class RecurringPlanningModelService {
         return `rpm:estId${establishmentId}:id${rpmId}`;
     }
     private rpmsListCacheKeyPrefix(establishmentId: number): string {
-        return `rpms:estId${establishmentId}:list:*`; // Pattern pour l'invalidation des listes
+        return `rpms:estId${establishmentId}:`; // Pattern pour l'invalidation des listes
     }
 
     // Méthode privée refactorisée pour la recherche et verrouillage
@@ -112,6 +113,8 @@ export class RecurringPlanningModelService {
 
 
     async createRpm(dto: CreateRecurringPlanningModelDto, establishmentId: number): Promise<RecurringPlanningModelOutputDto> {
+        this.validateRruleStringFormat(dto.rruleString);
+
         const transaction = await this.sequelize.transaction();
         try {
             const existingByName = await this.recurringPlanningModelModel.findOne({
@@ -124,7 +127,6 @@ export class RecurringPlanningModelService {
                 throw new RpmNameConflictError(dto.name, establishmentId);
             }
 
-            // ... (logique de création identique)
             const processedBreaks = this.ensureBreaksHaveIds(dto.breaks);
             const rpmData: RecurringPlanningModelCreationAttributes = {
                 ...dto,
@@ -132,7 +134,6 @@ export class RecurringPlanningModelService {
                 establishmentId,
             };
             const newRpm = await this.recurringPlanningModelModel.create(rpmData, { transaction });
-
             await transaction.commit();
 
             await this.cacheService.deleteByPattern(this.rpmsListCacheKeyPrefix(establishmentId));
@@ -142,7 +143,7 @@ export class RecurringPlanningModelService {
             await transaction.rollback();
 
             if (error instanceof PlanningModuleError) {
-                throw error; // On relance les erreurs métier déjà traitées (comme RpmNameConflictError)
+                throw error;
             }
 
             // Pour toutes les autres erreurs (DB, etc.), on log et on lance une erreur générique.
@@ -214,7 +215,6 @@ export class RecurringPlanningModelService {
         dto: UpdateRecurringPlanningModelDto,
         establishmentId: number
     ): Promise<RecurringPlanningModelOutputDto> {
-        // Refactorisation : séparer la validation et la persistance
         const rpm = await this.findRpmForUpdate(rpmId, establishmentId); // Lève RpmNotFoundError
 
         await this.validateRpmUpdate(dto, rpm, establishmentId); // Valide nom, rrule, breaks
@@ -233,15 +233,28 @@ export class RecurringPlanningModelService {
         try {
             await rpm.update(updateData, { transaction });
             await transaction.commit();
+        } catch (error) {
+            await transaction.rollback();
+            console.error(`Error updating RPM ID ${rpmId}:`, error);
+            throw new AppError('DbError', 500, "Could not update the recurring planning model.");
+        }
 
+        await this.cacheService.delete(this.rpmCacheKey(establishmentId, rpmId));
+        await this.cacheService.deleteByPattern(this.rpmsListCacheKeyPrefix(establishmentId));
+
+        try {
             const assignments = await this.rpmMemberAssignmentModel.findAll({
                 where: { recurringPlanningModelId: rpmId },
-                attributes: ['membershipId', 'establishmentId'] // establishmentId est déjà là
+                include: [{
+                    model: Membership,
+                    as: 'member',
+                    attributes: ['establishmentId'],
+                    required: true
+                }],
+                attributes: ['membershipId'],
             });
             const uniqueMemberContexts = new Map<string, { establishmentId: number, membershipId: number }>();
             for (const assign of assignments) {
-                // Récupérer l'establishmentId du membre via une jointure ou si le rpm a establishmentId
-                // Ici, on a déjà l'establishmentId du RPM.
                 uniqueMemberContexts.set(
                     `est${establishmentId}:memb${assign.membershipId}`,
                     { establishmentId, membershipId: assign.membershipId }
@@ -249,38 +262,50 @@ export class RecurringPlanningModelService {
             }
 
             for (const context of uniqueMemberContexts.values()) {
-                // Invalide tous les schedules mis en cache pour ce membre dans cet établissement.
-                // Le pattern doit correspondre à celui utilisé par DailyScheduleService.scheduleCacheKey.
-                // `schedule:estId<EID>:membId<MID>:date<YYYY-MM-DD>`
-                // Pour MemoryCacheService, `deleteByPattern` doit être capable de gérer cela.
                 await this.cacheService.deleteByPattern(`schedule:estId${context.establishmentId}:membId${context.membershipId}:date*`);
             }
-
-            return mapToRpmOutputDto(rpm); // rpm est mis à jour en mémoire
-        } catch (error) {
-            await transaction.rollback();
-            if (error instanceof PlanningModuleError) throw error;
-            console.error(`Error updating RPM ID ${rpmId}:`, error);
-            throw new AppError('DbError', 500, "Could not update the recurring planning model.");
+        } catch (e) {
+            console.error(e)
+            if (e instanceof PlanningModuleError) throw e;
         }
+
+        return mapToRpmOutputDto(rpm);
     }
 
     async deleteRpm(rpmId: number, establishmentId: number): Promise<void> {
         const transaction = await this.sequelize.transaction();
         try {
             const rpm = await this.findRpmForUpdate(rpmId, establishmentId, transaction); // Utilise la même logique pour trouver/verrouiller
-
-            await rpm.destroy({ transaction });
+            await rpm.destroy({transaction});
             await transaction.commit();
 
+        } catch(e) {
+            await transaction.rollback();
+
+            if (e instanceof PlanningModuleError) {
+                throw e;
+            }
+
+            console.error(`Error deleting RPM ID ${rpmId}:`, e);
+            throw new AppError('DbError', 500, "Could not delete the recurring planning model.");
+        }
+
+        await this.cacheService.delete(this.rpmCacheKey(establishmentId, rpmId));
+        await this.cacheService.deleteByPattern(this.rpmsListCacheKeyPrefix(establishmentId));
+
+        try {
             const assignments = await this.rpmMemberAssignmentModel.findAll({
                 where: { recurringPlanningModelId: rpmId },
-                attributes: ['membershipId', 'establishmentId'] // establishmentId est déjà là
+                include: [{
+                    model: Membership,
+                    as: 'member',
+                    attributes: ['establishmentId'],
+                    required: true
+                }],
+                attributes: ['membershipId'],
             });
             const uniqueMemberContexts = new Map<string, { establishmentId: number, membershipId: number }>();
             for (const assign of assignments) {
-                // Récupérer l'establishmentId du membre via une jointure ou si le rpm a establishmentId
-                // Ici, on a déjà l'establishmentId du RPM.
                 uniqueMemberContexts.set(
                     `est${establishmentId}:memb${assign.membershipId}`,
                     { establishmentId, membershipId: assign.membershipId }
@@ -288,18 +313,11 @@ export class RecurringPlanningModelService {
             }
 
             for (const context of uniqueMemberContexts.values()) {
-                // Invalide tous les schedules mis en cache pour ce membre dans cet établissement.
-                // Le pattern doit correspondre à celui utilisé par DailyScheduleService.scheduleCacheKey.
-                // `schedule:estId<EID>:membId<MID>:date<YYYY-MM-DD>`
-                // Pour MemoryCacheService, `deleteByPattern` doit être capable de gérer cela.
                 await this.cacheService.deleteByPattern(`schedule:estId${context.establishmentId}:membId${context.membershipId}:date*`);
             }
-
         } catch (error) {
-            await transaction.rollback();
             if (error instanceof PlanningModuleError) throw error;
             console.error(`Error deleting RPM ID ${rpmId}:`, error);
-            throw new AppError('DbError', 500, "Could not delete the recurring planning model.");
         }
     }
 }

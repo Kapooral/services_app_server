@@ -11,10 +11,7 @@ export const RPMBreakSchema = z.object({
     endTime: z.string().time({ precision: 0, message: "Break endTime must be in HH:MM:SS format." }),   // "HH:MM:SS"
     description: z.string().max(255, "Break description cannot exceed 255 characters.").optional().nullable(),
     breakType: z.nativeEnum(BreakType, { errorMap: () => ({ message: "Invalid break type." }) }),
-}).refine(data => data.startTime < data.endTime, { // Assurer que startTime < endTime
-    message: "Break endTime must be after startTime.",
-    path: ["endTime"],
-});
+})
 export type RPMBreakDto = z.infer<typeof RPMBreakSchema>;
 
 
@@ -31,9 +28,6 @@ export const CreateRecurringPlanningModelSchema = z.object({
         .refine(val => val.includes('FREQ='), { message: "RRule string must contain a FREQ component."}),
     defaultBlockType: z.nativeEnum(DefaultBlockType, { errorMap: () => ({ message: "Invalid default block type." }) }),
     breaks: z.array(RPMBreakSchema).max(20, "A maximum of 20 breaks can be defined.").optional().nullable(), // Max 20 pauses par modèle
-}).refine(data => data.globalStartTime < data.globalEndTime, {
-    message: "Global endTime must be after globalStartTime.",
-    path: ["globalEndTime"],
 }).refine(data => { // Valider que les pauses sont dans l'enveloppe globale
     if (data.breaks) {
         for (const breakItem of data.breaks) {
